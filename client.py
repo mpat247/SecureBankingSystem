@@ -1,97 +1,71 @@
 import socket
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import PKCS1_OAEP
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-import random
+from CryptoUtils import aes_encrypt, aes_decrypt, generate_rsa_keys, generate_nonce
 
-# Define the server host and port
-HOST = 'localhost'  # Localhost
-PORT = 4444
+HOST = 'localhost'
+PORT = 4446
 
-# Function to handle key distribution and authentication for the client
-def perform_key_distribution_and_authentication(s):
+def establish_secure_channel(client_socket):
+    print('Started securing channel with server.')
+    client_id = 'Client' + generate_nonce()
+    nonce_client = generate_nonce()
+    # Assuming client's public key needs to be shared initially; adjust as needed
+    client_private_key, client_public_key = generate_rsa_keys()
+
+    message = f"{client_id}||{nonce_client}".encode() + b'||' + client_public_key
+    encrypted_message = aes_encrypt(message)
+    client_socket.send(encrypted_message)
+
+    encrypted_reply = client_socket.recv(1024)
+    reply = aes_decrypt(encrypted_reply)
+    nonce_server, nonce_client_confirm, session_id = reply.decode().split('||')
+
+    print(f"Nonce from server: {nonce_server}, your nonce confirmation: {nonce_client_confirm}, session ID: {session_id}")
+
+    if nonce_client_confirm != nonce_client:
+        raise ValueError("Nonces don't match. Potential security breach.")
+
+    print('Channel secured successfully with server.')
+
+def prompt_and_send_login_credentials(client_socket):
+    choice = input("Enter:\nQ - Quit\nN - New User\nL - Log In\nChoice: ").strip().upper()
+
+    if choice == 'Q':
+        print("Quitting...")
+        return False
+    elif choice == 'N':
+        # Handle new user creation logic here
+        print("New user creation is not implemented yet.")
+        return False
+    elif choice == 'L':
+        username = input("Username: ")
+        password = input("Password: ")  # In real applications, use getpass.getpass()
+
+        credentials = f"{username}:{password}".encode()
+        encrypted_credentials = aes_encrypt(credentials)
+        client_socket.send(encrypted_credentials)
+
+        # Receive and decrypt the server's response
+        encrypted_response = client_socket.recv(1024)
+        response = aes_decrypt(encrypted_response).decode()
+        print(f"Login response: {response}")
+
+        return response == "Authentication Successful"
+    else:
+        print("Invalid choice. Please try again.")
+        return False
+
+
+def main():
+    client_socket = socket.create_connection((HOST, PORT))
     try:
-        # Step 1: Client receives encrypted session key and decrypts it
-        print("Step 1: Client receives encrypted session key and decrypts it")
-
-        # Receive the encrypted session key from server
-        encrypted_session_key = s.recv(1024)
-        print(f"Received encrypted session key: {encrypted_session_key.hex()}")
-
-        # Generate a temporary RSA key pair for session key decryption
-        temp_key = RSA.generate(1024)
-        cipher_rsa = PKCS1_OAEP.new(temp_key)
-
-        # Decrypt the session key using the temporary private key
-        session_key_decrypted = cipher_rsa.decrypt(encrypted_session_key)
-        print(f"Decrypted session key: {session_key_decrypted.hex()}")
-
-        # Step 2: Client generates nonce (Na) and sends it to server
-        print("Step 2: Client generates nonce (Na) and sends it to server")
-
-        # Generate nonce (Na) for client
-        na = b"random_nonce"  # Replace with actual nonce generation
-        print(f"Generated nonce Na: {na.hex()}")
-
-        # Send the nonce (Na) to server
-        s.send(na)
-        print(f"Sent nonce Na to server: {na.hex()}")
-
-        # Step 3: Client receives encrypted nonce (Nb) from server and decrypts it
-        print("Step 3: Client receives encrypted nonce (Nb) from server and decrypts it")
-
-        # Receive the encrypted nonce (Nb) from server
-        encrypted_nb = s.recv(1024)
-        print(f"Received encrypted nonce Nb: {encrypted_nb.hex()}")
-
-        # Decrypt nonce (Nb) using session key
-        cipher_aes = AES.new(session_key_decrypted, AES.MODE_ECB)
-        nonce_nb_decrypted = unpad(cipher_aes.decrypt(encrypted_nb), AES.block_size)
-        print(f"Decrypted nonce Nb by client: {nonce_nb_decrypted.hex()}")
-
-        # Step 4: Client sends acknowledgment to server
-        print("Step 4: Client sends acknowledgment to server")
-
-        # Send acknowledgment message (not implemented in client)
-        # print("Sent acknowledgment to server")
-
-        # Continue with username/password authentication or other actions...
-        # Rest of the code...
-
-    except Exception as e:
-        print("An error occurred:", str(e))
-
-# Function to start the client
-def client():
-    try:
-        # Create a TCP/IP socket
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            # Connect to the server
-            s.connect((HOST, PORT))
-
-            # Receive server's public key
-            server_public_key = s.recv(1024)
-            print("Received server's public key")
-
-            # Initialize RSA cipher with server's public key
-            server_rsa_key = RSA.import_key(server_public_key)
-            cipher_rsa = PKCS1_OAEP.new(server_rsa_key)
-
-            # Generate RSA key pair for the client
-            global client_key
-            client_key = RSA.generate(1024)
-
-            # Send client's public key to the server
-            s.send(client_key.publickey().export_key())
-            print("Sent client's public key to server")
-
-            # Perform key distribution and authentication
-            perform_key_distribution_and_authentication(s)
-
-    except Exception as e:
-        print("An error occurred:", str(e))
+        establish_secure_channel(client_socket)
+        if prompt_and_send_login_credentials(client_socket):
+            print("Login successful.")
+            # The client can now proceed to perform other tasks.
+        else:
+            print("Login failed. Please check your credentials.")
+    finally:
+        client_socket.close()
 
 if __name__ == "__main__":
-    # Create multiple client connections
-    client()
+    main()
