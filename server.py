@@ -1,60 +1,81 @@
 import socket
 import threading
-from CryptoUtils import aes_decrypt, aes_encrypt, generate_nonce
+import logging
+from CryptoUtils import rsa_decrypt, aes_encrypt, aes_decrypt, generate_nonce, hkdf, deserialize_public_key, load_private_key
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 
 HOST = 'localhost'
-PORT = 4449
+PORT = 4444
 
-def handle_client_connection(client_socket):
-    try:
-        encrypted_message = client_socket.recv(1024)
+class ClientHandler(threading.Thread):
+    def __init__(self, client_socket, client_address, server_private_key):
+        super().__init__()
+        self.client_socket = client_socket
+        self.client_address = client_address
+        self.server_private_key = server_private_key
 
-        # Decrypt the message from the client
-        message = aes_decrypt(encrypted_message)
-        client_id, nonce_client, client_public_key = message.decode().split('||')
+    def run(self):
+        logging.info(f"Handling client connection from {self.client_address}")
+        try:
+            # Receive and RSA decrypt the initial message
+            encrypted_message = self.client_socket.recv(1024)
+            plaintext_message = rsa_decrypt(encrypted_message, self.server_private_key)
+            logging.info(f"Decrypted RSA message from {self.client_address}: {plaintext_message}")
 
-        nonce_server = generate_nonce()
-        session_id = generate_nonce()  # Generate a unique session ID for this connection
-        response = f"{nonce_server}||{nonce_client}||{session_id}".encode()
+            # Extract client nonce from the decrypted message
+            nonce_client = plaintext_message
+            logging.info(f"Nonce received from client {self.client_address}: {nonce_client.hex()}")
 
-        # Encrypt the response using AES and send it back to the client
-        encrypted_reply = aes_encrypt(response)
-        client_socket.send(encrypted_reply)
+            # Generate server nonce and master secret
+            nonce_server = generate_nonce()
+            master_secret = hkdf(nonce_client + nonce_server)
+            logging.info(f"Generated server nonce for {self.client_address}: {nonce_server.hex()}")
+            logging.info(f"Generated master secret for {self.client_address}: {master_secret.hex()}")
 
-        print(f'Channel secured successfully with {client_id}. Session ID: {session_id}')
+            # Encrypt and send server nonce using AES encryption
+            encrypted_nonce_server = aes_encrypt(nonce_server)
+            self.client_socket.sendall(encrypted_nonce_server)
+            logging.info(f"Sent encrypted server nonce to {self.client_address}")
 
-        # Process user choice (Quit)
-        while True:
-            choice = receive_and_process_user_choice(client_socket)
-            if choice == 'Q':
-                print("Client chose to quit. Closing connection.")
-                break  # Exit the loop and close connection
-    except Exception as e:
-        print(f"An error occurred: {e}")
-    finally:
-        client_socket.close()
+            # Wait for further AES encrypted communication (Example)
+            encrypted_msg = self.client_socket.recv(1024)
+            try:
+                msg = aes_decrypt(encrypted_msg).decode('utf-8')
+                logging.info(f"Received AES encrypted message from {self.client_address}: {msg}")
+                response = "Acknowledged".encode('utf-8')
+                encrypted_response = aes_encrypt(response)
+                self.client_socket.sendall(encrypted_response)
+                logging.info(f"Sent AES encrypted response to {self.client_address}")
+            except UnicodeDecodeError:
+                logging.error("Error decoding message. Data may not be valid UTF-8.")
 
-def receive_and_process_user_choice(client_socket):
-    # Send initial options to the client
-    options_message = "Enter:\nQ - Quit"
-    encrypted_options = aes_encrypt(options_message.encode())
-    client_socket.send(encrypted_options)
+        except Exception as e:
+            logging.error(f"An error occurred with {self.client_address}: {e}")
+        finally:
+            self.client_socket.close()
 
-    # Receive and decrypt the user's choice
-    encrypted_choice = client_socket.recv(1024)
-    choice = aes_decrypt(encrypted_choice).decode()
+class BankServer:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        self.server_private_key = load_private_key('server_private_key.pem')
 
-    return choice.upper()
-
-def main():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.bind((HOST, PORT))
-    server_socket.listen(5)
-    print(f"Server listening on {HOST}:{PORT}")
-
-    while True:
-        client_socket, _ = server_socket.accept()
-        threading.Thread(target=handle_client_connection, args=(client_socket,)).start()
+    def start(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            server_socket.bind((self.host, self.port))
+            server_socket.listen()
+            logging.info(f"Server is listening on {self.host}:{self.port}")
+            try:
+                while True:
+                    client_socket, client_address = server_socket.accept()
+                    handler = ClientHandler(client_socket, client_address, self.server_private_key)
+                    handler.start()
+            except KeyboardInterrupt:
+                logging.info("Server is shutting down.")
 
 if __name__ == "__main__":
-    main()
+    server = BankServer(HOST, PORT)
+    server.start()

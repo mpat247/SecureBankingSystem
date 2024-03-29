@@ -1,40 +1,55 @@
 import socket
-from CryptoUtils import aes_encrypt, aes_decrypt, generate_rsa_keys, generate_nonce
+import logging
+from CryptoUtils import rsa_encrypt, generate_nonce, hkdf, deserialize_public_key, aes_decrypt, aes_encrypt
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 
 HOST = 'localhost'
-PORT = 4449
-
-def establish_secure_channel(client_socket):
-    client_id = 'Client' + generate_nonce()
-    nonce_client = generate_nonce()
-    # Assuming client's public key needs to be shared initially; adjust as needed
-    client_private_key, client_public_key = generate_rsa_keys()
-
-    message = f"{client_id}||{nonce_client}".encode() + b'||' + client_public_key
-    encrypted_message = aes_encrypt(message)
-    client_socket.send(encrypted_message)
-
-    encrypted_reply = client_socket.recv(1024)
-    reply = aes_decrypt(encrypted_reply)
-    nonce_server, nonce_client_confirm, session_id = reply.decode().split('||')
-
-    if nonce_client_confirm != nonce_client:
-        raise ValueError("Nonces don't match. Potential security breach.")
+PORT = 4444
 
 
-def main():
-    client_socket = socket.create_connection((HOST, PORT))
-    try:
-        establish_secure_channel(client_socket)
-        while True:
-            choice = input("Enter Q to quit: ").strip().upper()
-            if choice == 'Q':
-                print("Quitting...")
-                break
-            else:
-                print("Invalid choice. Please try again.")
-    finally:
-        client_socket.close()
+class BankClient:
+    def __init__(self, host, port):
+        self.host = host
+        self.port = port
+        # Load the server's public key from file
+        with open('server_public_key.pem', 'rb') as f:
+            self.server_public_key = deserialize_public_key(f.read())
+
+    def connect_to_server(self):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
+            try:
+                # Connect to the server
+                client_socket.connect((self.host, self.port))
+                logging.info(f"Connected to server at {self.host}:{self.port}")
+
+                # Encrypt and send client nonce using RSA
+                nonce_client = generate_nonce()
+                encrypted_message = rsa_encrypt(nonce_client, self.server_public_key)
+                client_socket.sendall(encrypted_message)
+
+                # Receive and decrypt the server's AES-encrypted response
+                encrypted_reply = client_socket.recv(1024)
+
+                # Derive master secret from client nonce
+                master_secret = hkdf(nonce_client + b'some_predefined_or_agreed_value')
+                aes_key = master_secret[:16]  # Derive AES key from master secret
+
+                decrypted_reply = aes_decrypt(encrypted_reply)
+
+                # Attempt to decode the reply as UTF-8 text if expected to be text
+                try:
+                    reply = decrypted_reply.decode('utf-8')
+                    logging.info(f"Received from server: {reply}")
+                except UnicodeDecodeError:
+                    # Handle binary data or log error
+                    logging.error("Received binary data, not decoding as text.")
+
+            except Exception as e:
+                logging.error(f"Failed to connect to server: {e}")
+
 
 if __name__ == "__main__":
-    main()
+    client = BankClient(HOST, PORT)
+    client.connect_to_server()

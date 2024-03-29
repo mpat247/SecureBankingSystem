@@ -1,28 +1,118 @@
-from Crypto.PublicKey import RSA
-from Crypto.Cipher import AES, PKCS1_OAEP
-from Crypto.Util.Padding import pad, unpad
-import random
-import hashlib
+from Cipher import AES
+from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import serialization, hashes
+from cryptography.hazmat.primitives.asymmetric import rsa, padding
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+import os
+import secrets
 
-# Hard-coded AES key (16 bytes to fit AES-128 bit requirement)
-AES_KEY = b'\x1a\xa5\x82\xd3\xf4\xc7\xae\x1f\x05)\x89\x9c\x2b\xf7\xe3\x80'
+AES_KEY = key_bytes = bytes.fromhex("b0d3e7e14b0f6f4e78231f45a8c1d9af")
+
 
 def generate_rsa_keys():
-    key = RSA.generate(2048)
-    private_key = key.export_key()  # Export private key to bytes
-    public_key = key.publickey().export_key()  # Export public key to bytes
-    return private_key, public_key
+    """
+    Generate an RSA private/public key pair.
+    """
+    private_key = rsa.generate_private_key(
+        public_exponent=65537,
+        key_size=2048,
+        backend=default_backend()
+    )
+    return private_key, private_key.public_key()
 
 
-def rsa_encrypt(public_key, data):
-    recipient_key = RSA.import_key(public_key)
-    cipher_rsa = PKCS1_OAEP.new(recipient_key)
-    return cipher_rsa.encrypt(data)
+def save_key_to_file(key, filename):
+    """
+    Save the RSA key to a file. Adjusts based on whether the key is public or private.
+    """
+    if isinstance(key, rsa.RSAPrivateKey):
+        pem = key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        )
+    elif isinstance(key, rsa.RSAPublicKey):
+        pem = key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+    else:
+        raise ValueError("Key must be an RSA public or private key")
 
-def rsa_decrypt(private_key, encrypted_data):
-    private_key = RSA.import_key(private_key)
-    cipher_rsa = PKCS1_OAEP.new(private_key)
-    return cipher_rsa.decrypt(encrypted_data)
+    with open(filename, 'wb') as pem_file:
+        pem_file.write(pem)
+
+def load_private_key(filename):
+    """
+    Load an RSA private key from a file.
+    """
+    with open(filename, 'rb') as key_file:
+        return serialization.load_pem_private_key(
+            key_file.read(),
+            password=None,
+            backend=default_backend()
+        )
+
+def load_public_key(filename):
+    """
+    Load an RSA public key from a file.
+    """
+    with open(filename, 'rb') as key_file:
+        return serialization.load_pem_public_key(
+            key_file.read(),
+            backend=default_backend()
+        )
+
+def rsa_encrypt(message, public_key):
+    """
+    Encrypt a message using an RSA public key.
+    """
+    return public_key.encrypt(
+        message,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+def rsa_decrypt(ciphertext, private_key):
+    """
+    Decrypt a message using an RSA private key.
+    """
+    return private_key.decrypt(
+        ciphertext,
+        padding.OAEP(
+            mgf=padding.MGF1(algorithm=hashes.SHA256()),
+            algorithm=hashes.SHA256(),
+            label=None
+        )
+    )
+
+def generate_nonce(length=16):
+    """
+    Generate a nonce.
+    """
+    return os.urandom(length)
+
+def pad(data, block_size):
+    """
+    Pad the data using PKCS7 padding.
+    """
+    pad_length = block_size - len(data) % block_size
+    return data + bytes([pad_length] * pad_length)
+
+def unpad(data, block_size):
+    """
+    Unpad the data using PKCS7 padding.
+    """
+    pad_length = data[-1]
+    if pad_length < 1 or pad_length > block_size:
+        raise ValueError("Invalid padding length")
+    if data[-pad_length:] != bytes([pad_length] * pad_length):
+        raise ValueError("Invalid padding bytes")
+    return data[:-pad_length]
 
 def aes_encrypt(data):
     """
@@ -36,44 +126,43 @@ def aes_encrypt(data):
 def aes_decrypt(encrypted_data):
     """
     Decrypts data using the pre-shared AES key.
-
     """
     cipher = AES.new(AES_KEY, AES.MODE_ECB)
     decrypted_data = cipher.decrypt(encrypted_data)
     unpadded_data = unpad(decrypted_data, AES.block_size)
     return unpadded_data
 
-def generate_nonce():
-    """Generates a 4-digit string nonce."""
-    return '{:04d}'.format(random.randint(0, 9999))
 
-def generate_session_id():
-    """Generates a unique session ID."""
-    return 'Session{:04d}'.format(random.randint(0, 9999))
-
-def hash_password(password, salt=""):
+def hkdf(input_key_material, length=32, salt=None):
     """
-    Hashes a password with an optional salt.
-    In real applications, each user should have a unique salt stored alongside their hashed password.
+    Derive keys using HKDF.
     """
-    # Concatenate the password and the salt (if any)
-    password_salt_combo = password + salt
+    if salt is None:
+        salt = secrets.token_bytes(16)  # Using secrets for cryptographically secure salt generation.
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=length,
+        salt=salt,
+        info=b'handshake data',
+        backend=default_backend()
+    )
+    return hkdf.derive(input_key_material)
 
-    # Create a new SHA-256 hash object
-    hash_object = hashlib.sha256()
 
-    # Update the hash object with the bytes of the password-salt combo
-    hash_object.update(password_salt_combo.encode())
-
-    # Return the hexadecimal representation of the digest
-    return hash_object.hexdigest()
-
-def check_password_hash(password, stored_hash, salt=""):
+def deserialize_public_key(pem):
     """
-    Checks a password against a stored hash with an optional salt.
+    Deserialize a public key from PEM format to a public key object.
     """
-    # Hash the password with the same salt used when it was originally hashed
-    password_hash = hash_password(password, salt)
+    return serialization.load_pem_public_key(
+        pem,
+        backend=default_backend()
+    )
 
-    # Compare the newly hashed password with the stored hash
-    return password_hash == stored_hash
+# Inside CryptoUtils.py
+def generate_and_save_rsa_keys():
+    private_key, public_key = generate_rsa_keys()
+    save_key_to_file(private_key, "server_private_key.pem")
+    save_key_to_file(public_key, "server_public_key.pem")
+
+if __name__ == "__main__":
+    generate_and_save_rsa_keys()
