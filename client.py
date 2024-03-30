@@ -1,55 +1,64 @@
+import os
+import random
 import socket
 import logging
-from CryptoUtils import rsa_encrypt, generate_nonce, hkdf, deserialize_public_key, aes_decrypt, aes_encrypt
+import colorlog
+from generateKeys import generate_rsa_keys, save_private_key, save_public_key, remove_keys
+from CryptoUtils import *
+import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+# Setup logging
+logger = logging.getLogger('ClientLogger')
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    handler = colorlog.StreamHandler()
+    handler.setFormatter(colorlog.ColoredFormatter(
+        '%(log_color)s[%(levelname)s]: %(message)s',
+        log_colors={
+            'INFO': 'cyan',
+            'ERROR': 'red',
+            'DEBUG': 'green',
+        }
+    ))
+    logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 4444
+PORT = 5000
+
+def client_operation():
+    clientID = f'ATMClient_{random.randint(1000, 9999)}'
+    logger.info(f"Starting client with ID {clientID}")
+    nonceC1 = generate_nonce()
+    # Generate and save RSA keys for this client session
+    private_key, public_key = generate_rsa_keys()
+    save_private_key(private_key, f'keys/{clientID}_private_key.pem')
+    save_public_key(public_key, f'keys/{clientID}_public_key.pem')
+    logger.info("Client keys generated and saved.")
+
+    try:
+        while True:
+            with socket.create_connection((HOST, PORT)) as sock:
+                logger.info("Connected to server.")
+                message = f"Hello from {clientID}"
+                sock.sendall(message.encode())
+                logger.info("Message sent to server. Waiting for response...")
+                serverID = sock.recv(1024)
+                logger.info(f"Received response: {serverID.decode()}")
 
 
-class BankClient:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        # Load the server's public key from file
-        with open('server_public_key.pem', 'rb') as f:
-            self.server_public_key = deserialize_public_key(f.read())
-
-    def connect_to_server(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
-            try:
-                # Connect to the server
-                client_socket.connect((self.host, self.port))
-                logging.info(f"Connected to server at {self.host}:{self.port}")
-
-                # Encrypt and send client nonce using RSA
-                nonce_client = generate_nonce()
-                encrypted_message = rsa_encrypt(nonce_client, self.server_public_key)
-                client_socket.sendall(encrypted_message)
-
-                # Receive and decrypt the server's AES-encrypted response
-                encrypted_reply = client_socket.recv(1024)
-
-                # Derive master secret from client nonce
-                master_secret = hkdf(nonce_client + b'some_predefined_or_agreed_value')
-                aes_key = master_secret[:16]  # Derive AES key from master secret
-
-                decrypted_reply = aes_decrypt(encrypted_reply)
-
-                # Attempt to decode the reply as UTF-8 text if expected to be text
-                try:
-                    reply = decrypted_reply.decode('utf-8')
-                    logging.info(f"Received from server: {reply}")
-                except UnicodeDecodeError:
-                    # Handle binary data or log error
-                    logging.error("Received binary data, not decoding as text.")
-
-            except Exception as e:
-                logging.error(f"Failed to connect to server: {e}")
-
+            # Input to continue or quit
+            quit_command = input("Enter 'q' to quit or any other key to continue: ").strip().lower()
+            if quit_command == 'q':
+                break
+    finally:
+        # Remove keys before exiting
+        remove_keys(clientID)
+        logger.info("Client keys removed. Exiting.")
 
 if __name__ == "__main__":
-    client = BankClient(HOST, PORT)
-    client.connect_to_server()
+    try:
+        client_operation()
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully
+        logger.info("Interrupt received, shutting down...")
+        sys.exit(0)

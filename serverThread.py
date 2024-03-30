@@ -6,7 +6,7 @@ PORT = 4444
 
 def main():
     # Create and start the server with the specified host and port
-    server = BankServer(HOST, PORT)
+    server = BankServer()
     server.start()
 
 if __name__ == "__main__":
