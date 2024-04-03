@@ -1,81 +1,157 @@
+import os
+import random
 import socket
-import threading
 import logging
-from CryptoUtils import rsa_decrypt, aes_encrypt, aes_decrypt, generate_nonce, hkdf, deserialize_public_key, load_private_key
+import colorlog
+from threading import Thread
+from tools import *
+import atexit
+import signal
+import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+# Setup logging
+logger = logging.getLogger('ServerLogger')
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    handler = colorlog.StreamHandler()
+    handler.setFormatter(colorlog.ColoredFormatter(
+        '%(log_color)s[%(levelname)s]: %(message)s',
+        log_colors={
+            'INFO': 'green',
+            'ERROR': 'red',
+            'DEBUG': 'yellow',
+        }
+    ))
+    logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 4444
+PORT = 5004
 
-class ClientHandler(threading.Thread):
-    def __init__(self, client_socket, client_address, server_private_key):
-        super().__init__()
-        self.client_socket = client_socket
-        self.client_address = client_address
-        self.server_private_key = server_private_key
+def handle_client_connection(client_socket, client_address):
+    try:
+        client_id = client_socket.recv(1024).decode()
+        logger.info(f"Message from {client_address}: {client_id}")
+        path = f'keys/{client_id}_shared_key.bin'
 
-    def run(self):
-        logging.info(f"Handling client connection from {self.client_address}")
+        shared_key = retrieve_aes_key_from_file(path)
+        if (not(shared_key)):
+            print(f'{shared_key} not found')
+
+        print(f'Shared key: {shared_key}')
+        response_message = serverID
+        client_socket.sendall(response_message.encode())
+
         try:
-            # Receive and RSA decrypt the initial message
-            encrypted_message = self.client_socket.recv(1024)
-            plaintext_message = rsa_decrypt(encrypted_message, self.server_private_key)
-            logging.info(f"Decrypted RSA message from {self.client_address}: {plaintext_message}")
+            print("Initial verification process started for client.")
 
-            # Extract client nonce from the decrypted message
-            nonce_client = plaintext_message
-            logging.info(f"Nonce received from client {self.client_address}: {nonce_client.hex()}")
+            # Receive nonce and timestamp from client
+            encrypted_nonce_timestamp = client_socket.recv(1024)
+            print("Received encrypted nonce and timestamp from client.")
 
-            # Generate server nonce and master secret
-            nonce_server = generate_nonce()
-            master_secret = hkdf(nonce_client + nonce_server)
-            logging.info(f"Generated server nonce for {self.client_address}: {nonce_server.hex()}")
-            logging.info(f"Generated master secret for {self.client_address}: {master_secret.hex()}")
+            decrypted_nonce_timestamp = aes_decrypt(shared_key, encrypted_nonce_timestamp)
+            print("Decrypted nonce and timestamp from client.")
 
-            # Encrypt and send server nonce using AES encryption
-            encrypted_nonce_server = aes_encrypt(nonce_server)
-            self.client_socket.sendall(encrypted_nonce_server)
-            logging.info(f"Sent encrypted server nonce to {self.client_address}")
+            nonce_c, timestamp_c = map(int, decrypted_nonce_timestamp.split(b"|"))
+            print(type(nonce_c))
+            print("Received nonce_c:", nonce_c)
+            print("Received timestamp_c:", timestamp_c)
 
-            # Wait for further AES encrypted communication (Example)
-            encrypted_msg = self.client_socket.recv(1024)
-            try:
-                msg = aes_decrypt(encrypted_msg).decode('utf-8')
-                logging.info(f"Received AES encrypted message from {self.client_address}: {msg}")
-                response = "Acknowledged".encode('utf-8')
-                encrypted_response = aes_encrypt(response)
-                self.client_socket.sendall(encrypted_response)
-                logging.info(f"Sent AES encrypted response to {self.client_address}")
-            except UnicodeDecodeError:
-                logging.error("Error decoding message. Data may not be valid UTF-8.")
+            # print(is_timestamp_valid(int(timestamp_c), get_timestamp()))
+            # Check if the timestamp is valid
+            if not is_timestamp_valid(int(timestamp_c), get_timestamp()):
+                print("Invalid timestamp received from client.")
+                logger.info("Invalid timestamp received from client.")
+                return False
 
+            # Send back the client's nonce, server's nonce, and timestamp
+            nonce_s = get_random_bytes(16)
+            timestamp_s = str(get_timestamp()).encode()
+            response = aes_encrypt(shared_key, f"{nonce_c}|{nonce_s}|{timestamp_s}")
+            client_socket.sendall(response)
+            print("Sent response containing server's nonce to client.")
+
+            # Wait for client's response with the server's nonce
+            encrypted_final = client_socket.recv(1024)
+            print("Received encrypted final response from client.")
+
+            decrypted_final = aes_decrypt(shared_key, encrypted_final)
+            print("Decrypted final response from client.")
+
+            nonce_s_received, nonce_c2, timestamp_c2 = decrypted_final.split(b"|")
+            print("Received nonce_s_received:", nonce_s_received)
+            print("Received nonce_c2:", nonce_c2)
+            print("Received timestamp_c2:", timestamp_c2)
+
+            # Final check
+            if nonce_s != nonce_s_received or not is_timestamp_valid(int(timestamp_c2), get_timestamp()):
+                print("Nonce or timestamp invalid in client's final response.")
+                logger.info("Nonce or timestamp invalid in client's final response.")
+                return False
+
+            print("Client authenticated successfully.")
+            logger.info("Client authenticated successfully.")  
         except Exception as e:
-            logging.error(f"An error occurred with {self.client_address}: {e}")
-        finally:
-            self.client_socket.close()
+            raise Exception("Initial verification failed")
 
-class BankServer:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        self.server_private_key = load_private_key('server_private_key.pem')
 
-    def start(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-            server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            server_socket.bind((self.host, self.port))
-            server_socket.listen()
-            logging.info(f"Server is listening on {self.host}:{self.port}")
-            try:
-                while True:
-                    client_socket, client_address = server_socket.accept()
-                    handler = ClientHandler(client_socket, client_address, self.server_private_key)
-                    handler.start()
-            except KeyboardInterrupt:
-                logging.info("Server is shutting down.")
+
+
+
+    except Exception as e:
+        logger.error(f"Error from {client_address}: {e}")
+    finally:
+        logger.info(f"Client {client_address} disconnected")
+        client_socket.close()
+
+def cleanup_server_keys(serverID, server_socket):
+
+    server_socket.close()
+
+def shutdown_signal_handler(signal, frame):
+    global serverID
+    global server_socket
+    logger.info("Shutdown signal received. Cleaning up...")
+    cleanup_server_keys(serverID, server_socket)
+    sys.exit(0)
+
+server_socket = None
+serverID = None
+# def save_server_keys(serverID):
+#     serverPrivateKey, serverPublicKey = generate_rsa_keys(flag=True)
+#     save_private_key(serverPrivateKey, f'keys/{serverID}_private_key.pem')
+#     save_public_key(serverPublicKey, f'keys/{serverID}_public_key.pem')
+#     logger.info(f'Server ID: {serverID} - Keys generated.')
+#     return serverPrivateKey, serverPublicKey
+
+def start_server():
+    global serverID
+    global server_socket
+    serverID = f'BankServer{random.randint(1000, 9999)}'
+    # serverPrivateKey, serverPublicKey = save_server_keys(serverID)
+
+    # Register signal handler for graceful shutdown
+    signal.signal(signal.SIGINT, shutdown_signal_handler)
+
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((HOST, PORT))
+    server_socket.listen()
+    logger.info(f"Server listening on {HOST}:{PORT}")
+
+    try:
+        while True:
+            client_socket, client_address = server_socket.accept()
+            logger.info(f"Client {client_address} connected")
+
+
+            client_handler = Thread(target=handle_client_connection, args=(client_socket, client_address))
+            client_handler.start()
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received. Shutting down server...")
+        cleanup_server_keys(serverID, server_socket)
+    finally:
+        if server_socket:
+            server_socket.close()
+        logger.info("Server shutdown")
 
 if __name__ == "__main__":
-    server = BankServer(HOST, PORT)
-    server.start()
+    start_server()

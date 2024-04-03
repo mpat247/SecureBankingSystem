@@ -1,55 +1,140 @@
+import os
+import random
 import socket
 import logging
-from CryptoUtils import rsa_encrypt, generate_nonce, hkdf, deserialize_public_key, aes_decrypt, aes_encrypt
+import colorlog
+from tools import *
+import sys
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+# Setup logging
+logger = logging.getLogger('ClientLogger')
+if not logger.handlers:
+    logger.setLevel(logging.INFO)
+    handler = colorlog.StreamHandler()
+    handler.setFormatter(colorlog.ColoredFormatter(
+        '%(log_color)s[%(levelname)s]: %(message)s',
+        log_colors={
+            'INFO': 'cyan',
+            'ERROR': 'red',
+            'DEBUG': 'green',
+        }
+    ))
+    logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 4444
+PORT = 5004
 
 
-class BankClient:
-    def __init__(self, host, port):
-        self.host = host
-        self.port = port
-        # Load the server's public key from file
-        with open('server_public_key.pem', 'rb') as f:
-            self.server_public_key = deserialize_public_key(f.read())
+def save_keys(sock, clientID):
+    # private_key, public_key = generate_rsa_keys()
+    # save_private_key(private_key, f'keys/{clientID}_private_key.pem')
+    # save_public_key(public_key, f'keys/{clientID}_public_key.pem')
+    # logger.info("Client keys generated and saved.")
+    logger.info("Connected to server.")
+    shared_key = get_random_bytes(16)
+    logger.info(f'Shared key with client: {clientID}: {shared_key}')
+    save_shared_key(shared_key, 'keys/', f'{clientID}_shared_key.bin')
+    message = f"{clientID}"
+    sock.sendall(message.encode())
+    logger.info("Message sent to server. Waiting for response...")
+    serverID = sock.recv(1024)
+    logger.info(f"Received response: {serverID.decode()}")
+    return serverID.decode(), shared_key
 
-    def connect_to_server(self):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
-            try:
-                # Connect to the server
-                client_socket.connect((self.host, self.port))
-                logging.info(f"Connected to server at {self.host}:{self.port}")
+def client_operation():
+    clientID = f'ATMClient_{random.randint(1000, 9999)}'
+    logger.info(f"Starting client with ID {clientID}")
+    # Generate and save RSA keys for this client session
 
-                # Encrypt and send client nonce using RSA
-                nonce_client = generate_nonce()
-                encrypted_message = rsa_encrypt(nonce_client, self.server_public_key)
-                client_socket.sendall(encrypted_message)
 
-                # Receive and decrypt the server's AES-encrypted response
-                encrypted_reply = client_socket.recv(1024)
-
-                # Derive master secret from client nonce
-                master_secret = hkdf(nonce_client + b'some_predefined_or_agreed_value')
-                aes_key = master_secret[:16]  # Derive AES key from master secret
-
-                decrypted_reply = aes_decrypt(encrypted_reply)
-
-                # Attempt to decode the reply as UTF-8 text if expected to be text
+    try:
+        while True:
+            with socket.create_connection((HOST, PORT)) as sock:
+                # intial connection and saving keys
+                serverID, shared_key = save_keys(sock, clientID)
+                print( shared_key)
+                print(serverID)
                 try:
-                    reply = decrypted_reply.decode('utf-8')
-                    logging.info(f"Received from server: {reply}")
-                except UnicodeDecodeError:
-                    # Handle binary data or log error
-                    logging.error("Received binary data, not decoding as text.")
+                    # Print socket and shared key for debugging
+                    print("Socket:", sock)
+                    print("Shared key:", shared_key)
 
-            except Exception as e:
-                logging.error(f"Failed to connect to server: {e}")
+                    # Generate nonce and timestamp
+                    nonce_c = generate_nonce()
+                    print("Nonce generated:", nonce_c)
+                    timestamp_c = str(get_timestamp()).encode()
+                    print("Timestamp encoded:", timestamp_c)
 
+                    # Concatenate nonce and timestamp, and then encode to bytes
+                    nonce_timestamp = f"{nonce_c}|{timestamp_c.decode()}"
+                    print("Combined nonce and timestamp:", nonce_timestamp)
+                    nonce_timestamp_bytes = nonce_timestamp.encode()
+                    print("Combined nonce and timestamp encoded:", nonce_timestamp_bytes)
+
+                    # Encrypt the nonce and timestamp using AES
+                    encrypted_nonce_timestamp = aes_encrypt(shared_key, nonce_timestamp_bytes)
+                    print("Encrypted nonce and timestamp:", encrypted_nonce_timestamp)
+
+                    # Send encrypted nonce and timestamp to server
+                    sock.sendall(encrypted_nonce_timestamp)
+                    print("Encrypted nonce and timestamp sent to server.")
+
+                    # Receive server's response
+                    encrypted_response = sock.recv(1024)
+                    print("Received encrypted response from server.")
+
+                    # Decrypt the response
+                    decrypted_response = aes_decrypt(shared_key, encrypted_response)
+                    decoded_response = decrypted_response.decode()  # Decode the decrypted response
+                    nonce_c_received, nonce_s, timestamp_s = decoded_response.split("|")  # Split the decoded response into its variables
+
+                    # Check if received nonce and timestamp are valid
+                    if nonce_c != nonce_c_received or not is_timestamp_valid(int(timestamp_s), get_timestamp()):
+                        print("Nonce or timestamp invalid in server's response.")
+                        return False
+
+                    # Generate new nonce and timestamp to send back to server
+                    nonce_c2 = generate_nonce()
+                    timestamp_c2 = str(get_timestamp()).encode()
+                    encrypted_final = aes_encrypt(shared_key, f"{nonce_s}|{nonce_c2}|{timestamp_c2}")
+
+                    # Send encrypted final response to server
+                    sock.sendall(encrypted_final)
+                    print("Encrypted final response sent to server.")
+
+                    # Receive server's final response
+                    encrypted_final_response = sock.recv(1024)
+                    print("Received encrypted final response from server.")
+
+                    # Decrypt the final response
+                    decrypted_final_response = aes_decrypt(shared_key, encrypted_final_response)
+                    decoded_final_response = decrypted_final_response.decode()  # Decode the final response
+                    nonce_c2_received, timestamp_s2 = decoded_final_response.split("|")  # Split the final response into its variables
+
+                    # Check if received new nonce is valid
+                    if nonce_c2 != nonce_c2_received or not is_timestamp_valid(int(timestamp_s2), get_timestamp()):
+                        print("Nonce or timestamp invalid in server's final response.")
+                        return False
+
+                    print("Server authenticated successfully.")
+                    raise Exception("Initial verification failed")
+                except Exception as e:
+                    print("Error:", e)
+
+            # Input to continue or quit
+            quit_command = input("Enter 'q' to quit or any other key to continue: ").strip().lower()
+            if quit_command == 'q':
+                break
+    finally:
+        # Remove keys before exiting
+        # remove_keys(clientID)
+        remove_shared_key(clientID)
+        logger.info("Client keys removed. Exiting.")
 
 if __name__ == "__main__":
-    client = BankClient(HOST, PORT)
-    client.connect_to_server()
+    try:
+        client_operation()
+    except KeyboardInterrupt:
+        # Handle Ctrl+C gracefully
+        logger.info("Interrupt received, shutting down...")
+        sys.exit(0)
