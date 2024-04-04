@@ -189,6 +189,8 @@ def handle_client_connection(client_socket, client_address):
                             userLogic()
 
                         return True
+                    
+                    # Check from here 
 
                     loginSuccess = userLogic()
 
