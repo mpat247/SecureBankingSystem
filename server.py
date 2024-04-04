@@ -25,83 +25,197 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5004
+PORT = 5005
+
+def register_user(username, password):
+    # Initialize the default balance to 0 for new users
+    default_balance = 0
+    with open("users.txt", "a") as file:
+        file.write(f"{username}|{password}|{default_balance}\n")
+        return "Registration successful."
+
+def login_user(username, password):
+    with open("users.txt", "r") as file:
+        for line in file:
+            stored_username, stored_password, balance = line.strip().split('|')
+            if stored_username == username and stored_password == password:
+                # Returning balance along with success message
+                return True, f"Login successful. Account balance: {balance}"
+    return False, "Login failed. Invalid username or password."
+
+
+
 
 def handle_client_connection(client_socket, client_address):
-    try:
-        client_id = client_socket.recv(1024).decode()
-        logger.info(f"Message from {client_address}: {client_id}")
-        path = f'keys/{client_id}_shared_key.bin'
+    exits = False
+    msg=''
 
-        shared_key = retrieve_aes_key_from_file(path)
-        if (not(shared_key)):
-            print(f'{shared_key} not found')
-
-        print(f'Shared key: {shared_key}')
-        response_message = serverID
-        client_socket.sendall(response_message.encode())
-
+    while exits == False:
         try:
-            print("Initial verification process started for client.")
+            client_id = client_socket.recv(1024).decode()
+            logger.info(f"Message from {client_address}: {client_id}")
+            path = f'keys/{client_id}_shared_key.bin'
 
-            # Receive nonce and timestamp from client
-            encrypted_nonce_timestamp = client_socket.recv(1024)
-            print("Received encrypted nonce and timestamp from client.")
+            shared_key = retrieve_aes_key_from_file(path)
+            if (not(shared_key)):
+                print(f'{shared_key} not found')
 
-            decrypted_nonce_timestamp = aes_decrypt(shared_key, encrypted_nonce_timestamp)
-            print("Decrypted nonce and timestamp from client.")
+            print(f'Shared key: {shared_key}')
+            response_message = serverID
+            client_socket.sendall(response_message.encode())
 
-            nonce_c, timestamp_c = map(int, decrypted_nonce_timestamp.split(b"|"))
-            print(type(nonce_c))
-            print("Received nonce_c:", nonce_c)
-            print("Received timestamp_c:", timestamp_c)
+            try:
+                print("Initial verification process started for client.")
 
-            # print(is_timestamp_valid(int(timestamp_c), get_timestamp()))
-            # Check if the timestamp is valid
-            if not is_timestamp_valid(int(timestamp_c), get_timestamp()):
-                print("Invalid timestamp received from client.")
-                logger.info("Invalid timestamp received from client.")
-                return False
+                # Receive nonce and timestamp from client
+                encrypted_nonce_timestamp = client_socket.recv(1024)
+                print("Received encrypted nonce and timestamp from client.")
 
-            # Send back the client's nonce, server's nonce, and timestamp
-            nonce_s = get_random_bytes(16)
-            timestamp_s = str(get_timestamp()).encode()
-            response = aes_encrypt(shared_key, f"{nonce_c}|{nonce_s}|{timestamp_s}")
-            client_socket.sendall(response)
-            print("Sent response containing server's nonce to client.")
+                decrypted_nonce_timestamp = aes_decrypt(shared_key, encrypted_nonce_timestamp)
+                print("Decrypted nonce and timestamp from client.")
 
-            # Wait for client's response with the server's nonce
-            encrypted_final = client_socket.recv(1024)
-            print("Received encrypted final response from client.")
+                nonce_c, timestamp_c = map(int, decrypted_nonce_timestamp.split(b"|"))
+                print(type(nonce_c))
+                print("Received nonce_c:", nonce_c)
+                print("Received timestamp_c:", timestamp_c)
 
-            decrypted_final = aes_decrypt(shared_key, encrypted_final)
-            print("Decrypted final response from client.")
+                # print(is_timestamp_valid(int(timestamp_c), get_timestamp()))
+                # Check if the timestamp is valid
+                print(not is_timestamp_valid(int(timestamp_c), get_timestamp()))
+                if not is_timestamp_valid(int(timestamp_c), get_timestamp()):
+                    print("Invalid timestamp received from client.")
+                    logger.info("Invalid timestamp received from client.")
+                    return False
 
-            nonce_s_received, nonce_c2, timestamp_c2 = decrypted_final.split(b"|")
-            print("Received nonce_s_received:", nonce_s_received)
-            print("Received nonce_c2:", nonce_c2)
-            print("Received timestamp_c2:", timestamp_c2)
+                nonce_s = generate_nonce()
+                print("Nonce generated:", nonce_s)
+                timestamp_s = str(get_timestamp()).encode()
+                print("Timestamp encoded:", timestamp_s)
 
-            # Final check
-            if nonce_s != nonce_s_received or not is_timestamp_valid(int(timestamp_c2), get_timestamp()):
-                print("Nonce or timestamp invalid in client's final response.")
-                logger.info("Nonce or timestamp invalid in client's final response.")
-                return False
+                # Concatenate nonce and timestamp, and then encode to bytes
+                nonce_timestamp = f"{nonce_s}|{timestamp_s.decode()}|{nonce_c}"
+                print("Combined nonce and timestamp and client nonce:", nonce_timestamp)
+                nonce_timestamp_bytes = nonce_timestamp.encode()
+                print("Combined nonce and timestamp and client nonce encoded:", nonce_timestamp_bytes)
 
-            print("Client authenticated successfully.")
-            logger.info("Client authenticated successfully.")  
+                # Encrypt the nonce and timestamp using AES
+                encrypted_nonce_timestamp = aes_encrypt(shared_key, nonce_timestamp_bytes)
+                print("Encrypted nonce and timestamp client nonce:", encrypted_nonce_timestamp)
+
+                # Send encrypted nonce and timestamp to server
+                client_socket.sendall(encrypted_nonce_timestamp)
+                print("Encrypted nonce and timestamp sent to Client.")
+
+
+                # Receive nonce and timestamp from client
+                encrypted_nonce_timestamp2 = client_socket.recv(1024)
+                print("Received encrypted nonce2 and timestamp2 from client.")
+
+                decrypted_nonce_timestamp2 = aes_decrypt(shared_key, encrypted_nonce_timestamp2)
+                print("Decrypted nonce2 and timestamp2 from client.")
+
+                nonce_c2, timestamp_c2, nonce_s_returned = map(int, decrypted_nonce_timestamp2.split(b"|"))
+                print(type(nonce_c2))
+                print("Received nonce_c2:", nonce_c2)
+                print("Received timestamp_c2:", timestamp_c2)
+                print("Received nonce_s:", nonce_s_returned)
+
+                # print(is_timestamp_valid(int(timestamp_c), get_timestamp()))
+                # Check if the timestamp is valid
+                print(not is_timestamp_valid(int(timestamp_c2), get_timestamp()))
+                print((nonce_s != nonce_s_returned) or not is_timestamp_valid(int(timestamp_c), get_timestamp()))
+                if (nonce_s != nonce_s_returned) or not is_timestamp_valid(int(timestamp_c), get_timestamp()):
+                    print("Invalid timestamp received from client.")
+                    logger.info("Invalid timestamp received from client.")
+                    return False
+                
+                # MASTER SECRET
+                
+                timestamp_secret = str(get_timestamp()).encode()
+                server_nonce_secret = generate_nonce()
+                master_secret = generate_master_secret(shared_key, nonce_c2, server_nonce_secret, timestamp_secret)
+                print(type(master_secret))
+                print("Master secret: ", master_secret)
+                # timestamp_s3 = str(get_timestamp()).encode()
+                # print("Timestamp encoded:", timestamp_s3)
+
+                # # Concatenate nonce and timestamp, and then encode to bytes
+                
+                # secure_master_key = f"{nonce_c2}|{timestamp_s3.decode()}|{master_secret}"
+                # print("Master Secret with nonce and time stamp:", secure_master_key)
+                # secure_master_key_bytes = secure_master_key.encode()
+                # print("Master Secret encoded:", secure_master_key_bytes)
+
+                # # Encrypt the nonce and timestamp using AES
+                # encrypted_master_secret = aes_encrypt(shared_key, secure_master_key_bytes)
+                # print("Encrypted Master Secret",encrypted_master_secret)
+                master_secret_encrypted = aes_encrypt(shared_key, master_secret)
+                # Send encrypted nonce and timestamp to server
+                client_socket.sendall(master_secret_encrypted)
+                print("Encrypted Master Secret Sent to Client")
+
+
+                enc_key, mac_key = derive_keys_from_master_secret(master_secret)
+                print(f'Enc Key: {enc_key}')
+                print(f'Mac Key: {mac_key}')
+
+                if not enc_key or not mac_key:
+                    logger.error("Authentication failed.")
+                    msg= "Authentication failed. Client disconnected"
+                    exits = True
+                    client_socket.close()
+                else:
+                    logger.info("Authentication Successful and Keys Retrieved.") 
+                    
+
+                    def userLogic():
+                        login_credentials = client_socket.recv(1024).decode()
+                        action, username, password = login_credentials.split('|', 2)
+                        if action.lower() == 'r':
+                            print("Intiating registration")
+                            login_response = register_user(username, password)
+                            print('Registration successful')
+                            client_socket.sendall(login_response.encode())                             
+                            userLogic()
+                        elif action.lower() == 'l':
+                            print('Initiating Login"')
+                            success, login_response = login_user(username, password)
+                            print("Login successful")
+                            client_socket.sendall(login_response.encode())                             
+                        else:
+                            print('unknown command')
+                            login_response = "Unknown command."
+                            client_socket.sendall(login_response.encode()) 
+                            userLogic()
+
+                        return True
+
+                    loginSuccess = userLogic()
+
+                    if not loginSuccess:
+                        logger.error("Login failed.")
+                        msg= "Login failed. Client disconnected"
+                        exits = True
+                        client_socket.close()
+                    else:
+                        pass
+
+
+
+                exits = True 
+                # AUTHENTICATION COMPLETED  
+            except Exception as e:
+                raise Exception("Initial verification failed")
+
+
+
+
+
         except Exception as e:
-            raise Exception("Initial verification failed")
-
-
-
-
-
-    except Exception as e:
-        logger.error(f"Error from {client_address}: {e}")
-    finally:
-        logger.info(f"Client {client_address} disconnected")
-        client_socket.close()
+            logger.error(f"Error from {client_address}: {e}")
+        finally:
+            logger.info(f"Client {client_address} disconnected")
+            client_socket.close()   
 
 def cleanup_server_keys(serverID, server_socket):
 

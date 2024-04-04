@@ -8,6 +8,7 @@ from Crypto.Util.Padding import pad, unpad
 from Crypto.Random import get_random_bytes
 import logging
 import colorlog
+import hashlib
 
 # Setup logging
 logger = logging.getLogger('ToolsLogger')
@@ -109,17 +110,7 @@ def is_timestamp_valid(sent_timestamp, current_timestamp, window=100):
 #     logger.info(f"Public key saved to {filename}")
 
 def save_shared_key(key, folder_path, file_name):
-    """
-    Save a symmetric AES key to a file in the specified folder.
-
-    Args:
-        key (bytes): The AES key to be saved.
-        folder_path (str): The path to the folder where the key will be saved.
-        file_name (str): The name of the file to save the key to.
-
-    Returns:
-        str: The full path to the saved key file.
-    """
+   
     # Create the folder if it doesn't exist
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
@@ -180,3 +171,17 @@ def retrieve_aes_key_from_file(aes_key_file_path):
     except Exception as e:
         logger.error(f"Error while retrieving AES key: {e}")
         return None
+    
+def generate_master_secret(shared_key, client_nonce, server_nonce, timestamp):
+    master_secret_input = f"{shared_key}{client_nonce}{server_nonce}{timestamp}".encode()
+    master_secret = hashlib.sha256(master_secret_input).digest()
+    return master_secret
+
+def derive_keys_from_master_secret(master_secret):
+    enc_key_input = f"enc{master_secret}".encode()
+    enc_key = hashlib.sha256(enc_key_input).digest()
+
+    mac_key_input = f"mac{master_secret}".encode()
+    mac_key = hashlib.sha256(mac_key_input).digest()
+
+    return enc_key, mac_key

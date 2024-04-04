@@ -22,7 +22,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5004
+PORT = 5005
 
 
 def save_keys(sock, clientID):
@@ -41,90 +41,192 @@ def save_keys(sock, clientID):
     logger.info(f"Received response: {serverID.decode()}")
     return serverID.decode(), shared_key
 
+def display_menu():
+    choice = input("Would you like to login or register? 'L' for Login, 'R' for Registration: ").upper()
+    if choice == 'L':
+        return 'L'
+    elif choice == 'R':
+        return 'R'
+    else:
+        print("Invalid choice. Please select 'L' for Login or 'R' for Registration.")
+        return display_menu()
+
+
 def client_operation():
     clientID = f'ATMClient_{random.randint(1000, 9999)}'
     logger.info(f"Starting client with ID {clientID}")
     # Generate and save RSA keys for this client session
 
-
     try:
         while True:
             with socket.create_connection((HOST, PORT)) as sock:
+                
+                exits = False
+                msg = ""
+                done = False
+
+
                 # intial connection and saving keys
                 serverID, shared_key = save_keys(sock, clientID)
                 print( shared_key)
                 print(serverID)
-                try:
-                    # Print socket and shared key for debugging
-                    print("Socket:", sock)
-                    print("Shared key:", shared_key)
+                while exits == False:
+                    try:
+                        # Print socket and shared key for debugging
+                        print("Socket:", sock)
+                        print("Shared key:", shared_key)
 
-                    # Generate nonce and timestamp
-                    nonce_c = generate_nonce()
-                    print("Nonce generated:", nonce_c)
-                    timestamp_c = str(get_timestamp()).encode()
-                    print("Timestamp encoded:", timestamp_c)
+                        # Generate nonce and timestamp
+                        nonce_c = generate_nonce()
+                        print("Nonce generated:", nonce_c)
+                        timestamp_c = str(get_timestamp()).encode()
+                        print("Timestamp encoded:", timestamp_c)
 
-                    # Concatenate nonce and timestamp, and then encode to bytes
-                    nonce_timestamp = f"{nonce_c}|{timestamp_c.decode()}"
-                    print("Combined nonce and timestamp:", nonce_timestamp)
-                    nonce_timestamp_bytes = nonce_timestamp.encode()
-                    print("Combined nonce and timestamp encoded:", nonce_timestamp_bytes)
+                        # Concatenate nonce and timestamp, and then encode to bytes
+                        nonce_timestamp = f"{nonce_c}|{timestamp_c.decode()}"
+                        print("Combined nonce and timestamp:", nonce_timestamp)
+                        nonce_timestamp_bytes = nonce_timestamp.encode()
+                        print("Combined nonce and timestamp encoded:", nonce_timestamp_bytes)
 
-                    # Encrypt the nonce and timestamp using AES
-                    encrypted_nonce_timestamp = aes_encrypt(shared_key, nonce_timestamp_bytes)
-                    print("Encrypted nonce and timestamp:", encrypted_nonce_timestamp)
+                        # Encrypt the nonce and timestamp using AES
+                        encrypted_nonce_timestamp = aes_encrypt(shared_key, nonce_timestamp_bytes)
+                        print("Encrypted nonce and timestamp:", encrypted_nonce_timestamp)
 
-                    # Send encrypted nonce and timestamp to server
-                    sock.sendall(encrypted_nonce_timestamp)
-                    print("Encrypted nonce and timestamp sent to server.")
+                        # Send encrypted nonce and timestamp to server
+                        sock.sendall(encrypted_nonce_timestamp)
+                        print("Encrypted nonce and timestamp sent to server.")
 
-                    # Receive server's response
-                    encrypted_response = sock.recv(1024)
-                    print("Received encrypted response from server.")
+                        # Receive nonce and timestamp from client
+                        encrypted_server_response = sock.recv(1024)
+                        print("Received encrypted nonce and timestamp from client.")
 
-                    # Decrypt the response
-                    decrypted_response = aes_decrypt(shared_key, encrypted_response)
-                    decoded_response = decrypted_response.decode()  # Decode the decrypted response
-                    nonce_c_received, nonce_s, timestamp_s = decoded_response.split("|")  # Split the decoded response into its variables
+                        decrypted_server_response = aes_decrypt(shared_key, encrypted_server_response)
+                        print("Decrypted nonce and timestamp from client.")
 
-                    # Check if received nonce and timestamp are valid
-                    if nonce_c != nonce_c_received or not is_timestamp_valid(int(timestamp_s), get_timestamp()):
-                        print("Nonce or timestamp invalid in server's response.")
-                        return False
+                        nonce_s, timestamp_s, nonce_c_return = map(int, decrypted_server_response.split(b"|"))
+                        print(type(nonce_s))
+                        print("Received nonce_s:", nonce_s)
+                        print("Received timestamp_s:", timestamp_s)
+                        print("Received nonce_c:", nonce_c_return)
+                        
+                        # print(is_timestamp_valid(int(timestamp_c), get_timestamp()))
+                        # Check if the timestamp is valid
+                        # add nonce_c check
+                        print(not is_timestamp_valid(int(timestamp_s), get_timestamp()))
+                        print((nonce_c != nonce_c_return) or not is_timestamp_valid(int(timestamp_s), get_timestamp()))
+                        if (nonce_c != nonce_c_return) or not is_timestamp_valid(int(timestamp_s), get_timestamp()):
+                            logger.info("Invalid timestamp received from client or nonce not verified.")
+                            logger.info("Invalid timestamp received from client or nonce not verified.")
+                            return False
+                        
+                    #   logger.info("Server authenticated successfully.")
 
-                    # Generate new nonce and timestamp to send back to server
-                    nonce_c2 = generate_nonce()
-                    timestamp_c2 = str(get_timestamp()).encode()
-                    encrypted_final = aes_encrypt(shared_key, f"{nonce_s}|{nonce_c2}|{timestamp_c2}")
+                        # Generate nonce and timestamp
+                        nonce_c2 = generate_nonce()
+                        print("Nonce2 generated:", nonce_c2)
+                        timestamp_c2 = str(get_timestamp()).encode()
+                        print("Timestamp2 encoded:", timestamp_c)
 
-                    # Send encrypted final response to server
-                    sock.sendall(encrypted_final)
-                    print("Encrypted final response sent to server.")
+                        # Concatenate nonce and timestamp, and then encode to bytes
+                        nonce_timestamp2 = f"{nonce_c2}|{timestamp_c2.decode()}|{nonce_s}"
+                        print("Combined nonce2 and timestamp2 and server nonce:", nonce_timestamp2)
+                        nonce_timestamp_bytes2 = nonce_timestamp2.encode()
+                        print("Combined nonce2 and timestamp2 and server nonce encoded:", nonce_timestamp_bytes2)
 
-                    # Receive server's final response
-                    encrypted_final_response = sock.recv(1024)
-                    print("Received encrypted final response from server.")
+                        # Encrypt the nonce and timestamp using AES
+                        encrypted_nonce_timestamp2 = aes_encrypt(shared_key, nonce_timestamp_bytes2)
+                        print("Encrypted nonce2 and timestamp2:", encrypted_nonce_timestamp2)
 
-                    # Decrypt the final response
-                    decrypted_final_response = aes_decrypt(shared_key, encrypted_final_response)
-                    decoded_final_response = decrypted_final_response.decode()  # Decode the final response
-                    nonce_c2_received, timestamp_s2 = decoded_final_response.split("|")  # Split the final response into its variables
+                        # Send encrypted nonce and timestamp to server
+                        sock.sendall(encrypted_nonce_timestamp2)
+                        print("Encrypted nonce2 and timestamp2 sent to server.")
 
-                    # Check if received new nonce is valid
-                    if nonce_c2 != nonce_c2_received or not is_timestamp_valid(int(timestamp_s2), get_timestamp()):
-                        print("Nonce or timestamp invalid in server's final response.")
-                        return False
+                        # MASTER SECRET
 
-                    print("Server authenticated successfully.")
-                    raise Exception("Initial verification failed")
-                except Exception as e:
-                    print("Error:", e)
+                        # Receive master secret from client
+                        encrypted_master_secret = sock.recv(1024)
+                        print("Encrypted Master Secret from Server.", encrypted_master_secret)
 
-            # Input to continue or quit
-            quit_command = input("Enter 'q' to quit or any other key to continue: ").strip().lower()
-            if quit_command == 'q':
-                break
+                        master_secret = aes_decrypt(shared_key, encrypted_master_secret)
+                        print("Decrypted Master Secret from Server.", master_secret)
+
+                        enc_key, mac_key = derive_keys_from_master_secret(master_secret)
+
+                        print(f'Enc Key: {enc_key}')
+                        print(f'Mac Key: {mac_key}')
+
+                        if not enc_key or not mac_key:
+                            logger.error("Authentication failed.")
+                            msg= "Authentication failed"
+                            exits = True
+                            break
+                        else:
+                            logger.info('Authentication Successful and Keys Retrieved.')
+                           # Start log in/ register process
+
+                            def userLogic():
+                                action = display_menu()
+                                username = input("Enter your username: ")
+                                password = input("Enter your password: ")
+
+                                login_credentials = f"{action}|{username}|{password}"  
+                                sock.sendall(login_credentials.encode())
+                                login_response = sock.recv(1024).decode()
+                                print(login_response)
+                                if(login_response == "Registration successful."):
+                                    print("Registration successful")
+                                    userLogic()
+                                elif(login_response == "Login successful."):
+                                    print("login successful")
+                                    return True
+                                else:
+                                    print("Invalid credentials. Please try again.")
+                                    userLogic()
+
+                            clientLoginSuccess = userLogic() 
+                                                # Check from here 
+
+                            if not clientLoginSuccess:
+                                logger.error("Login failed.")
+                                msg= "Login failed"
+                                exits = True
+                                break  
+
+                        # # Receive server's final response
+                        # encrypted_final_response = sock.recv(1024)
+                        # print("Received encrypted final response from server.")
+
+                        # # Decrypt the final response
+                        # decrypted_final_response = aes_decrypt(shared_key, encrypted_final_response)
+                        # decoded_final_response = decrypted_final_response.decode()  # Decode the final response
+                        # nonce_c2_received, timestamp_s2 = decoded_final_response.split("|")  # Split the final response into its variables
+
+                        # # Check if received new nonce sis valid
+                        # if nonce_c2 != nonce_c2_received or not is_timestamp_valid(int(timestamp_s2), get_timestamp()):
+                        #     print("Nonce or timestamp invalid in server's final response.")
+                        #     return False
+
+
+
+                        # 4raise Exception("Initial verification failed")
+                    
+                        # AUTHENTICATION COMPLETED 
+                        exits=True
+                        msg="Authentication completed successfully"
+                    except Exception as e:
+                        print("Error:", e)
+
+                if exits:
+                    logger.error(msg)
+                    break
+                elif done:
+                    logger.info(msg)  
+                
+
+            # # Input to continue or quit
+            # quit_command = input("Enter 'q' to quit or any other key to continue: ").strip().lower()
+            # if quit_command == 'q':
+            #     break
     finally:
         # Remove keys before exiting
         # remove_keys(clientID)
