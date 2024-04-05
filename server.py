@@ -37,6 +37,9 @@ def register_user(username, password):
 
 
 
+
+
+
 def login_user(username, password):
     print('Reached Login Function: Attempting to login user.')
 
