@@ -185,3 +185,24 @@ def derive_keys_from_master_secret(master_secret):
     mac_key = hashlib.sha256(mac_key_input).digest()
 
     return enc_key, mac_key
+def hash_password(password):
+    print('Hashing Password')
+    salt = os.urandom(16)
+    print(f'Salt: {salt}')
+    hashed_pw = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
+    print(f'Hashed Password: {hashed_pw}')
+    print(f'salt + hashed_pw: {salt + hashed_pw}')
+    return salt + hashed_pw
+
+def verify_password(stored_password, provided_password):
+    print('Verifying password')
+
+    salt = stored_password[:16]
+    print(f'Salt: {salt}')
+    stored_hash = stored_password[16:]
+    print(f'Stored hash: {stored_hash}')
+    provided_encoded = provided_password.encode()
+    provided_hash = hashlib.pbkdf2_hmac('sha256', provided_encoded, salt, 100000)
+    print(f'Provided hash: {provided_hash}')
+
+    return stored_hash == provided_hash
