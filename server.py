@@ -8,6 +8,7 @@ from tools import *
 import atexit
 import signal
 import sys
+import base64
 
 # Setup logging
 logger = logging.getLogger('ClientLogger')
@@ -25,38 +26,42 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5000
+PORT = 5011
 
-def register_user(username, password):
+def register_user(username, password, key):
+    existing, msg = login_user(username, password, key)
+    if existing:
+        return "User already exists. Please login instead."
     default_balance = 0
-    hashed_password = hash_password(password)  # This should return a string
-    print("Hashed password while registering: "+hashed_password)
+    hashed_password = hash_password(password)  # This returns a base64-encoded string
+    user_data = f"{username}|{hashed_password}|{default_balance}\n"
+
+    # Directly use the encrypted base64 string returned from aes_encrypt_cbc
+    encrypted_user_data_b64 = aes_encrypt_cbc(key, user_data)
+
     with open("users.txt", "a") as file:
-        file.write(f"{username}|{hashed_password}|{default_balance}\n")
+        file.write(encrypted_user_data_b64 + "\n")
+
     return "Registration successful."
 
 
 
-
-
-
-def login_user(username, password):
+def login_user(username, password, key):
     print('Reached Login Function: Attempting to login user.')
 
-    with open("users.txt", "r") as file:  # Ensure text mode
-        for line in file:
-            stored_username, stored_password, balance = line.strip().split('|')
-            print(stored_username)
-            print(stored_password)
-            print(balance)
+    with open("users.txt", "r") as file:
+        for encrypted_line_b64 in file:
+            encrypted_line_b64 = encrypted_line_b64.strip()
+
+            # Directly decrypt the base64 string using aes_decrypt_cbc
+            decrypted_user_data = aes_decrypt_cbc(key, encrypted_line_b64)
+
+            stored_username, stored_password, balance = decrypted_user_data.strip().split('|')
             if stored_username == username:
                 print(f'User {username} found in database. Verifying password...')
-                print(f'Stored Password: {stored_password}')
-                print(f'Received Password: {password}')
-                if verify_password(stored_password, password):
+                if verify_password(stored_password, password):  # Ensure verify_password handles base64-encoded string correctly
                     print(f'Password verification successful for user {username}.')
                     return True, f"Login successful. Account balance: {balance}"
-
                 else:
                     print(f'Password verification failed for user {username}.')
                     return False, "Login failed. Invalid username or password."
@@ -171,10 +176,10 @@ def handle_user_actions(client_socket, enc_key, mac_key):
             action, username, password = user_action.split('|', 2)
 
             if action.lower() == 'r':
-                response = register_user(username, password)
+                response = register_user(username, password, enc_key)
                 logger.info("User registered successfully.")
             elif action.lower() == 'l':
-                success, response = login_user(username, password)
+                success, response = login_user(username, password, enc_key)
                 if success:
                     logger.info(f"User {username} logged in successfully.")
                 else:

@@ -22,7 +22,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5000
+PORT = 5011
 
 
 def save_keys(server_socket, clientID):

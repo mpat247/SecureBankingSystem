@@ -52,6 +52,30 @@ def aes_decrypt(key, ciphertext):
     plaintext = unpad(padded_plaintext, AES_BLOCK_SIZE)
     return plaintext
 
+# ADD CBC MODE
+
+def aes_encrypt_cbc(key, plaintext):
+    print(key)
+    print(plaintext)
+    cipher = AES.new(key, AES.MODE_CBC)
+    print(cipher)
+    ct_bytes = cipher.encrypt(pad(plaintext.encode('utf-8'), AES.block_size))
+    print(ct_bytes)
+    iv = cipher.iv
+    print(iv)
+    encrypted_data = base64.b64encode(iv + ct_bytes).decode('utf-8')
+    print(encrypted_data)
+    return encrypted_data
+
+def aes_decrypt_cbc(key, encrypted_data_b64):
+    iv_ciphertext = base64.b64decode(encrypted_data_b64)
+    iv = iv_ciphertext[:AES.block_size]
+    ct_bytes = iv_ciphertext[AES.block_size:]
+    cipher = AES.new(key, AES.MODE_CBC, iv=iv)
+    plaintext = unpad(cipher.decrypt(ct_bytes), AES.block_size).decode('utf-8')
+    return plaintext
+
+
 # # Function to load RSA key from file
 # def load_rsa_key(path):
 #     with open(path, 'rb') as key_file:
@@ -185,24 +209,27 @@ def derive_keys_from_master_secret(master_secret):
     mac_key = hashlib.sha256(mac_key_input).digest()
 
     return enc_key, mac_key
+
+
+import base64
+
 def hash_password(password):
     print('Hashing Password')
     salt = os.urandom(16)
-    print(f'Salt: {salt}')
     hashed_pw = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
-    print(f'Hashed Password: {hashed_pw}')
-    print(f'salt + hashed_pw: {salt + hashed_pw}')
-    return salt + hashed_pw
+    # Concatenate salt and hash, then encode the result as a base64 string for storage
+    salted_hash = base64.b64encode(salt + hashed_pw).decode('utf-8')
+    return salted_hash
+
 
 def verify_password(stored_password, provided_password):
     print('Verifying password')
 
-    salt = stored_password[:16]
-    print(f'Salt: {salt}')
-    stored_hash = stored_password[16:]
-    print(f'Stored hash: {stored_hash}')
-    provided_encoded = provided_password.encode()
-    provided_hash = hashlib.pbkdf2_hmac('sha256', provided_encoded, salt, 100000)
-    print(f'Provided hash: {provided_hash}')
+    # Decode the stored_password from base64 to get the bytes back
+    salted_hash_bytes = base64.b64decode(stored_password)
+    salt = salted_hash_bytes[:16]
+    stored_hash = salted_hash_bytes[16:]
+
+    provided_hash = hashlib.pbkdf2_hmac('sha256', provided_password.encode('utf-8'), salt, 100000)
 
     return stored_hash == provided_hash
