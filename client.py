@@ -5,8 +5,10 @@ import logging
 import colorlog
 from tools import *
 import sys
+import tkinter as tk
+from tkinter import simpledialog, messagebox
 
-# Setup logging
+#######################Console colors##################
 logger = logging.getLogger('ClientLogger')
 if not logger.handlers:
     logger.setLevel(logging.INFO)
@@ -22,14 +24,9 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5011
-
-
+PORT = 5009
+#################### save client keys ##################
 def save_keys(server_socket, clientID):
-    # private_key, public_key = generate_rsa_keys()
-    # save_private_key(private_key, f'keys/{clientID}_private_key.pem')
-    # save_public_key(public_key, f'keys/{clientID}_public_key.pem')
-    # logger.info("Client keys generated and saved.")
     logger.info("Connected to server.")
     shared_key = get_random_bytes(16)
     logger.info(f'Shared key with client: {clientID}: {shared_key}')
@@ -41,18 +38,7 @@ def save_keys(server_socket, clientID):
     logger.info(f"Received response: {serverID.decode()}")
     return serverID.decode(), shared_key
 
-def display_menu():
-    choice = input("Would you like to login or register? 'L' for Login, 'R' for Registration: ").upper()
-    if choice == 'L':
-        return 'L'
-    elif choice == 'R':
-        return 'R'
-    else:
-        print("Invalid choice. Please select 'L' for Login or 'R' for Registration.")
-        return display_menu()
-
-
-
+#######Initial Verificaiton, Securing channel and getting encryption and MAC keys###############
 def initial_verification(shared_key, server_socket):
     # Print socket and shared key for debugging
     print("Socket:", server_socket)
@@ -137,104 +123,68 @@ def initial_verification(shared_key, server_socket):
     return enc_key, mac_key
 
 
-def handle_user_actions(server_socket, enc_key, mac_key):
-    while True:
-        action = display_menu()
-        print(action)# Prompts user for 'L' (login) or 'R' (registration)
-        if action not in ['L', 'R']:
-            print("Invalid choice. Please select 'L' for Login or 'R' for Registration.")
-            continue
-
-        username = input("Enter your username: ")
-        password = input("Enter your password: ")
-        print(f'PASSWORD: {password}')
-        login_credentials = f"{action}|{username}|{password}".encode()
-
-        # Encrypting the login or registration credentials
-        credentials_encrypted = aes_encrypt(enc_key, login_credentials)
-        server_socket.sendall(credentials_encrypted)
-
-        # Receiving and decrypting the server's response
-        response_encrypted = server_socket.recv(1024)
-        response = aes_decrypt(enc_key, response_encrypted).decode('utf-8')
-        print(response)
-
-        if "successful" in response:
-            print("Operation successful.")
-            if "logged" in response:
-                print("Ready for transactions.")
-                break  # Assume login grants access to different functionalities; break loop
-            else:
-                print("Registration Successful. You may now log in.")
-                continue
-                # Do not break; allow the user to see the display menu again for possible login
-        else:
-            print("Operation failed or invalid credentials. Please try again.")
-
-
 def client_operation():
     clientID = f'ATMClient_{random.randint(1000, 9999)}'
     logger.info(f"Starting client with ID {clientID}")
     # Generate and save RSA keys for this client session
     try:
-        while True:
-            with socket.create_connection((HOST, PORT)) as server_socket:
+        with socket.create_connection((HOST, PORT)) as server_socket:
+            # intial connection and saving keys
+            serverID, shared_key = save_keys(server_socket, clientID)
+            print(shared_key)
+            print(serverID)
+            try:
+                # Key Distribution
+                enc_key, mac_key = initial_verification(shared_key, server_socket)
+                print(f'Encryption Key: {enc_key}')
+                print(f'MAC Key: {mac_key}')
 
-                exits = False
-                msg = ""
-                done = False
-                # intial connection and saving keys
-                serverID, shared_key = save_keys(server_socket, clientID)
-                print( shared_key)
-                print(serverID)
-                while exits == False:
-                    try:
-                        # Key Distribution
-                        enc_key, mac_key = initial_verification(shared_key, server_socket)
-                        print(f'Encryption Key: {enc_key}')
-                        print(f'MAC Key: {mac_key}')
+                if not enc_key or not mac_key:
+                    logger.error("Authentication failed.")
 
-                        if not enc_key or not mac_key:
-                            logger.error("Authentication failed.")
-                            msg= "Authentication failed"
-                            exits = True
-                            break
+                else:
+                    loggedIn = False
+
+                    # Client side: Sending login or registration requests
+                    while not loggedIn:
+                        username, password, action = collect_user_input()
+                        print(f'Username: {username} | Password: {password} | Action: {action}')
+                        # Format and encrypt the message
+                        message = f"{action}|{username}|{password}"
+                        print(message)
+                        print(message.encode('utf-8'))
+                        encrypted_message = aes_encrypt(enc_key, message.encode())
+                        print(encrypted_message)
+                        # Send to server
+                        server_socket.sendall(encrypted_message)
+
+                        # Wait for and decrypt the response
+                        encrypted_login_response = server_socket.recv(1024)
+                        decrypted_login_response = aes_decrypt(enc_key, encrypted_login_response)
+                        response = decrypted_login_response.decode()
+
+                        # Example response processing
+                        if "Login successful" in response:
+                            messagebox.showinfo("Success", "Login successful!")
+                            loggedIn = True
+                        elif "Registration successful" in response:
+                            messagebox.showinfo("Success", "Registration successful. Please log in.")
                         else:
-                            logger.info('Authentication Successful and Keys Retrieved.')
-                            handle_user_actions(server_socket, enc_key, mac_key)
+                            messagebox.showerror("Error", response)
+
+                    if loggedIn:
+                        print("Logged in successfully")
+                        print("Continue to transaction")
+
+                    else:
+                        logger.error("Unable to Login. Exiting Program.")
+
+                # AUTHENTICATION COMPLETED
+
+            except Exception as e:
+                print("Error:", e)
 
 
-
-                        # # Receive server's final response
-                        # encrypted_final_response = server_socket.recv(1024)
-                        # print("Received encrypted final response from server.")
-
-                        # # Decrypt the final response
-                        # decrypted_final_response = aes_decrypt(shared_key, encrypted_final_response)
-                        # decoded_final_response = decrypted_final_response.decode()  # Decode the final response
-                        # nonce_c2_received, timestamp_s2 = decoded_final_response.split("|")  # Split the final response into its variables
-
-                        # # Check if received new nonce sis valid
-                        # if nonce_c2 != nonce_c2_received or not is_timestamp_valid(int(timestamp_s2), get_timestamp()):
-                        #     print("Nonce or timestamp invalid in server's final response.")
-                        #     return False
-
-
-
-                        # 4raise Exception("Initial verification failed")
-                    
-                        # AUTHENTICATION COMPLETED 
-                        exits=True
-
-                    except Exception as e:
-                        print("Error:", e)
-
-                if exits:
-                    logger.error("Authentication failed")
-                    break
-                elif done:
-                    logger.info("Authentication completed successfully")
-                
 
             # # Input to continue or quit
             # quit_command = input("Enter 'q' to quit or any other key to continue: ").strip().lower()
@@ -245,6 +195,38 @@ def client_operation():
         # remove_keys(clientID)
         remove_shared_key(clientID)
         logger.info("Client keys removed. Exiting.")
+
+def collect_user_input():
+    # Initialize the variables to store user input
+    user_info = {'username': '', 'password': '', 'action': ''}
+
+    def on_submit():
+        # Mark user_info as nonlocal to modify it
+        user_info['username'] = username_entry.get()
+        user_info['password'] = password_entry.get()
+        user_info['action'] = 'L' if login_var.get() else 'R'
+        root.destroy()
+
+    root = tk.Tk()
+    root.geometry('300x200')
+
+    tk.Label(root, text="Username:").pack()
+    username_entry = tk.Entry(root)
+    username_entry.pack()
+
+    tk.Label(root, text="Password:").pack()
+    password_entry = tk.Entry(root, show="*")
+    password_entry.pack()
+
+    login_var = tk.BooleanVar(value=True)  # Default to Login
+    tk.Radiobutton(root, text="Login", variable=login_var, value=True).pack()
+    tk.Radiobutton(root, text="Register", variable=login_var, value=False).pack()
+
+    tk.Button(root, text="Submit", command=on_submit).pack()
+
+    root.mainloop()
+    # Return the collected information
+    return user_info['username'], user_info['password'], user_info['action']
 
 if __name__ == "__main__":
     try:

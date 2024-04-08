@@ -1,7 +1,10 @@
+import hmac
 import os
 import random
 import time
 import glob
+
+from Crypto.Hash import SHA256, HMAC
 from Crypto.PublicKey import RSA
 from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Util.Padding import pad, unpad
@@ -9,6 +12,7 @@ from Crypto.Random import get_random_bytes
 import logging
 import colorlog
 import hashlib
+import base64
 
 # Setup logging
 logger = logging.getLogger('ToolsLogger')
@@ -28,15 +32,6 @@ logger.addHandler(handler)
 AES_KEY_SIZE = 16
 AES_BLOCK_SIZE = 16
 
-# Function for RSA encryption
-# def rsa_encrypt(public_key, data):
-#     cipher = PKCS1_OAEP.new(public_key)
-#     return cipher.encrypt(data)
-
-# # Function for RSA decryption
-# def rsa_decrypt(private_key, encrypted_data):
-#     cipher = PKCS1_OAEP.new(private_key)
-#     return cipher.decrypt(encrypted_data)
 
 # Function for AES encryption
 def aes_encrypt(key, plaintext):
@@ -68,26 +63,20 @@ def aes_encrypt_cbc(key, plaintext):
     return encrypted_data
 
 def aes_decrypt_cbc(key, encrypted_data_b64):
+    print(key)
+    print(encrypted_data_b64)
     iv_ciphertext = base64.b64decode(encrypted_data_b64)
+    print(iv_ciphertext)
     iv = iv_ciphertext[:AES.block_size]
+    cipher = AES.new(key)
     ct_bytes = iv_ciphertext[AES.block_size:]
+    print(ct_bytes)
     cipher = AES.new(key, AES.MODE_CBC, iv=iv)
+    print(cipher)
     plaintext = unpad(cipher.decrypt(ct_bytes), AES.block_size).decode('utf-8')
+    print(plaintext)
     return plaintext
 
-
-# # Function to load RSA key from file
-# def load_rsa_key(path):
-#     with open(path, 'rb') as key_file:
-#         key = RSA.import_key(key_file.read())
-#     return key
-
-# # Function to save RSA key to file
-# def save_rsa_key(key, path):
-#     with open(path, 'wb') as key_file:
-#         key_file.write(key.export_key())
-
-# Utility to generate a secure random AES key
 def generate_aes_key():
     return get_random_bytes(16)
 
@@ -101,37 +90,6 @@ def is_timestamp_valid(sent_timestamp, current_timestamp, window=100):
     # Allow a 10-second window for the message to be valid
     # print(abs(current_timestamp - sent_timestamp) <= window)
     return abs(current_timestamp - sent_timestamp) <= window
-
-# def generate_rsa_keys(flag=None):
-#     if flag == True:
-#         keys_folder_path = 'keys/'
-#         key_files = glob.glob(f'{keys_folder_path}*.pem')
-
-#         if len(key_files) == 2:
-#             private_key_path = None
-#             public_key_path = None
-
-#             for file in key_files:
-#                 if 'private' in file:
-#                     private_key_path = file
-#                 elif 'public' in file:
-#                     public_key_path = file
-#             if private_key_path and public_key_path:
-#                 remove_keys(None, public_key_path, private_key_path)
-#     key = RSA.generate(2048)
-#     private_key = key.export_key()
-#     public_key = key.publickey().export_key()
-#     return private_key, public_key
-
-# def save_private_key(private_key, filename):
-#     with open(filename, 'wb') as pem_file:
-#         pem_file.write(private_key)
-#     logger.info(f"Private key saved to {filename}")
-
-# def save_public_key(public_key, filename):
-#     with open(filename, 'wb') as pem_file:
-#         pem_file.write(public_key)
-#     logger.info(f"Public key saved to {filename}")
 
 def save_shared_key(key, folder_path, file_name):
    
@@ -147,28 +105,6 @@ def save_shared_key(key, folder_path, file_name):
         key_file.write(key)
 
     return file_path
-
-# def remove_keys(id, publicKeyPath=None, privateKeyPath=None):
-#     if publicKeyPath and privateKeyPath:
-#         private_key_path = f'{privateKeyPath}'
-#         public_key_path = f'{publicKeyPath}'
-
-#         for path in [private_key_path, public_key_path]:
-#             try:
-#                 os.remove(path)
-#                 logger.info(f"Removed key: {path}")
-#             except FileNotFoundError:
-#                 logger.error(f"Key file not found: {path}")
-#     else:
-#         private_key_path2 = f'keys/{id}_private_key.pem'
-#         public_key_path2 = f'keys/{id}_public_key.pem'
-
-#         for path in [private_key_path2, public_key_path2]:
-#             try:
-#                 os.remove(path)
-#                 logger.info(f"Removed key: {path}")
-#             except FileNotFoundError:
-#                 logger.error(f"Key file not found: {path}")
 
 def remove_shared_key(id):
     path = f'keys/{id}_shared_key.bin'
@@ -210,26 +146,20 @@ def derive_keys_from_master_secret(master_secret):
 
     return enc_key, mac_key
 
-
-import base64
-
 def hash_password(password):
-    print('Hashing Password')
-    salt = os.urandom(16)
-    hashed_pw = hashlib.pbkdf2_hmac('sha256', password.encode('utf-8'), salt, 100000)
-    # Concatenate salt and hash, then encode the result as a base64 string for storage
-    salted_hash = base64.b64encode(salt + hashed_pw).decode('utf-8')
-    return salted_hash
+    hashed_pw = hashlib.sha256(password.encode()).hexdigest()
+    print(hashed_pw)
+    return hashed_pw
 
+def verify_password(hashed_password, provided_password):
+    return hash_password(provided_password) == hashed_password
 
-def verify_password(stored_password, provided_password):
-    print('Verifying password')
+def generate_mac(message, key):
+    h = HMAC.new(key, digestmod=SHA256)
+    h.update(message)
+    return h.hexdigest()
 
-    # Decode the stored_password from base64 to get the bytes back
-    salted_hash_bytes = base64.b64decode(stored_password)
-    salt = salted_hash_bytes[:16]
-    stored_hash = salted_hash_bytes[16:]
+def verify_mac(message, received_mac, key):
+    expected_mac = generate_mac(message, key)
+    return hmac.compare_digest(expected_mac, received_mac)
 
-    provided_hash = hashlib.pbkdf2_hmac('sha256', provided_password.encode('utf-8'), salt, 100000)
-
-    return stored_hash == provided_hash
