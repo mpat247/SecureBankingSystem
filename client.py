@@ -196,37 +196,55 @@ def client_operation():
         remove_shared_key(clientID)
         logger.info("Client keys removed. Exiting.")
 
+import tkinter as tk
+from tkinter import font as tkFont
+
 def collect_user_input():
     # Initialize the variables to store user input
     user_info = {'username': '', 'password': '', 'action': ''}
 
     def on_submit():
-        # Mark user_info as nonlocal to modify it
+        # Update user_info with inputs
         user_info['username'] = username_entry.get()
         user_info['password'] = password_entry.get()
         user_info['action'] = 'L' if login_var.get() else 'R'
         root.destroy()
 
+    # Setup the root window
     root = tk.Tk()
-    root.geometry('300x200')
+    root.title("User Action")
+    root.geometry('350x200')
+    root.configure(bg='lightblue')
 
-    tk.Label(root, text="Username:").pack()
-    username_entry = tk.Entry(root)
+    # Font style
+    fontStyle = tkFont.Font(family="Helvetica", size=12)
+    buttonStyle = tkFont.Font(family="Helvetica", size=12, weight="bold")
+
+    # Username Entry
+    tk.Label(root, text="Username:", bg='lightblue', font=fontStyle).pack(pady=(20, 0))
+    username_entry = tk.Entry(root, font=fontStyle)
     username_entry.pack()
 
-    tk.Label(root, text="Password:").pack()
-    password_entry = tk.Entry(root, show="*")
+    # Password Entry
+    tk.Label(root, text="Password:", bg='lightblue', font=fontStyle).pack(pady=(10, 0))
+    password_entry = tk.Entry(root, show="*", font=fontStyle)
     password_entry.pack()
 
+    # Action Selection
     login_var = tk.BooleanVar(value=True)  # Default to Login
-    tk.Radiobutton(root, text="Login", variable=login_var, value=True).pack()
-    tk.Radiobutton(root, text="Register", variable=login_var, value=False).pack()
+    tk.Radiobutton(root, text="Login", variable=login_var, value=True, bg='lightblue', font=fontStyle).pack()
+    tk.Radiobutton(root, text="Register", variable=login_var, value=False, bg='lightblue', font=fontStyle).pack()
 
-    tk.Button(root, text="Submit", command=on_submit).pack()
+    # Submit Button
+    tk.Button(root, text="Submit", command=on_submit, bg='#4CAF50', fg='white', font=buttonStyle).pack(pady=(10, 0))
 
     root.mainloop()
-    # Return the collected information
     return user_info['username'], user_info['password'], user_info['action']
+
+# To run the function, you'll need to uncomment the following line:
+# user_inputs = collect_user_input()
+# Note: Uncommenting and running the above line outside of a Python environment that supports GUI operations may result in an error.
+
 
 if __name__ == "__main__":
     try:

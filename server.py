@@ -294,8 +294,7 @@ def handle_client_connection(client_socket, client_address):
                 if not encrypted_message:
                     break  # Client disconnected
 
-                response = process_message(encrypted_message, enc_key)
-                client_socket.send(response.encode())  # Send back the response
+
         else:
             logger.error("Unable to Login. Exiting Program.")
 
