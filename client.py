@@ -122,6 +122,32 @@ def initial_verification(shared_key, server_socket):
 
     return enc_key, mac_key
 
+def prepare_message(action, username, amount, mac_key, enc_key):
+    timestamp = str(int(time.time()))
+    print("Timestamp: " + timestamp)
+    # Construct the base message
+    base_message = f"{timestamp}|{action}|{username}"
+    print(f'Base message: {base_message}')
+    # Only add amount to the message if the action requires it and it's provided
+    if action != 'L' and amount:
+        base_message += f"|{amount}"
+        print(base_message)
+
+    # Generate MAC using the constructed base message and the secret MAC key
+    mac = generate_mac(mac_key, base_message)
+    print(mac)
+    mac_b64 = base64.b64encode(mac).decode('utf-8')  # Convert MAC to base64 for transmission
+    print(mac_b64)
+
+    # Include the MAC in the full message
+    full_message = f"{base_message}|{mac_b64}"
+    print(full_message)
+
+    # Encrypt the full message using AES in CBC mode with the encryption key
+    encrypted_message = aes_encrypt_cbc(enc_key, full_message)
+    print(encrypted_message)
+    return encrypted_message
+
 
 def client_operation():
     clientID = f'ATMClient_{random.randint(1000, 9999)}'
@@ -148,6 +174,8 @@ def client_operation():
                     # Client side: Sending login or registration requests
                     while not loggedIn:
                         username, password, action = collect_user_input()
+                        if action == 'Q':
+                            break
                         print(f'Username: {username} | Password: {password} | Action: {action}')
                         # Format and encrypt the message
                         message = f"{action}|{username}|{password}"
@@ -165,6 +193,8 @@ def client_operation():
 
                         # Example response processing
                         if "Login successful" in response:
+                            userBalance = server_socket.recv(1024).decode('utf-8')
+                            print(userBalance)
                             messagebox.showinfo("Success", "Login successful!")
                             loggedIn = True
                         elif "Registration successful" in response:
@@ -172,12 +202,35 @@ def client_operation():
                         else:
                             messagebox.showerror("Error", response)
 
-                    if loggedIn:
-                        print("Logged in successfully")
-                        print("Continue to transaction")
+                    while loggedIn:
+                        action, amount = collect_transaction_input(username, userBalance)
+                        print(action, amount)
+                        if action == 'Q':
+                            print("Logging out...")
+                            break  # Exit the loop
+                        print(action, username,amount, mac_key, enc_key)
+                        encrypted_message = prepare_message(action, username, amount, mac_key, enc_key)
+                        print(encrypted_message)
+                        server_socket.sendall(encrypted_message.encode('utf-8'))
 
-                    else:
-                        logger.error("Unable to Login. Exiting Program.")
+                        # Handle server response
+                        encrypted_response = server_socket.recv(4096)
+                        response = aes_decrypt_cbc(enc_key, encrypted_response.decode('utf-8'))
+                        response_type, message = response.split('|',
+                                                                1)  # Splitting only on the first '|' to ensure any additional '|' in the message don't affect splitting
+
+                        if response_type == "Success":
+                            messagebox.showinfo("Success", message)
+                            if action == 'L':  # If the action was to view logs
+                                show_logs_screen(
+                                    message)  # Assuming show_logs_screen is a function you will define to display logs
+                            else:
+                                messagebox.showinfo("Success", message)  # For Deposit, Withdraw, or Balance Inquiry
+                        elif response_type == "Error":
+                            messagebox.showerror("Error", message)
+
+                    print("Session ended.")
+
 
                 # AUTHENTICATION COMPLETED
 
@@ -196,50 +249,98 @@ def client_operation():
         remove_shared_key(clientID)
         logger.info("Client keys removed. Exiting.")
 
-import tkinter as tk
-from tkinter import font as tkFont
+
 
 def collect_user_input():
-    # Initialize the variables to store user input
-    user_info = {'username': '', 'password': '', 'action': ''}
-
-    def on_submit():
-        # Update user_info with inputs
-        user_info['username'] = username_entry.get()
-        user_info['password'] = password_entry.get()
-        user_info['action'] = 'L' if login_var.get() else 'R'
+    def finalize(action):
+        user_info['username'] = username_entry.get() if username_entry else ''
+        user_info['password'] = password_entry.get() if password_entry else ''
+        user_info['action'] = action
         root.destroy()
 
-    # Setup the root window
+    def on_close():
+        # Handle the quit action when the window is closed
+        finalize('Q')
+
+    user_info = {'username': '', 'password': '', 'action': ''}
+
     root = tk.Tk()
     root.title("User Action")
-    root.geometry('350x200')
-    root.configure(bg='lightblue')
+    root.geometry('450x350')
+    root.configure(bg='#2D3047')
+    root.protocol("WM_DELETE_WINDOW", on_close)  # Handle the window close event
 
-    # Font style
-    fontStyle = tkFont.Font(family="Helvetica", size=12)
-    buttonStyle = tkFont.Font(family="Helvetica", size=12, weight="bold")
+    # Font Styles
+    labelFont = ('Arial', 12)
+    entryFont = ('Arial', 12)
+    buttonFont = ('Arial', 12, 'bold')
 
-    # Username Entry
-    tk.Label(root, text="Username:", bg='lightblue', font=fontStyle).pack(pady=(20, 0))
-    username_entry = tk.Entry(root, font=fontStyle)
-    username_entry.pack()
+    # Define Entry widgets globally so they can be accessed in on_close if needed
+    global username_entry, password_entry
+    username_entry = tk.Entry(root, font=entryFont, bd=0, bg='#EFF1F3')
+    password_entry = tk.Entry(root, show="*", font=entryFont, bd=0, bg='#EFF1F3')
 
-    # Password Entry
-    tk.Label(root, text="Password:", bg='lightblue', font=fontStyle).pack(pady=(10, 0))
-    password_entry = tk.Entry(root, show="*", font=fontStyle)
-    password_entry.pack()
+    # Layout for Username and Password Entry
+    tk.Label(root, text="Username:", bg='#2D3047', fg='white', font=labelFont).place(x=60, y=60)
+    username_entry.place(x=160, y=60, width=220, height=30)
 
-    # Action Selection
-    login_var = tk.BooleanVar(value=True)  # Default to Login
-    tk.Radiobutton(root, text="Login", variable=login_var, value=True, bg='lightblue', font=fontStyle).pack()
-    tk.Radiobutton(root, text="Register", variable=login_var, value=False, bg='lightblue', font=fontStyle).pack()
+    tk.Label(root, text="Password:", bg='#2D3047', fg='white', font=labelFont).place(x=60, y=120)
+    password_entry.place(x=160, y=120, width=220, height=30)
 
-    # Submit Button
-    tk.Button(root, text="Submit", command=on_submit, bg='#4CAF50', fg='white', font=buttonStyle).pack(pady=(10, 0))
+    # Action Buttons
+    tk.Button(root, text="Login", bg='#00C897', fg='white', font=buttonFont, bd=0,
+              command=lambda: finalize('L')).place(x=50, y=200, width=100, height=40)
+
+    tk.Button(root, text="Register", bg='#FF6B6B', fg='white', font=buttonFont, bd=0,
+              command=lambda: finalize('R')).place(x=180, y=200, width=100, height=40)
+
+    tk.Button(root, text="Quit", bg='#757575', fg='white', font=buttonFont, bd=0,
+              command=lambda: finalize('Q')).place(x=310, y=200, width=100, height=40)
 
     root.mainloop()
+
     return user_info['username'], user_info['password'], user_info['action']
+
+
+def collect_transaction_input(username, balance):
+    root = tk.Tk()
+    root.title("Transaction")
+    root.geometry('300x250')
+
+    transaction_info = {'action': '', 'amount': ''}
+
+    def set_action(action):
+        transaction_info['action'] = action
+        if action in ['D', 'W']:  # For deposit and withdraw, prompt for amount
+            transaction_info['amount'] = simpledialog.askstring("Amount", "Enter amount:")
+        root.destroy()
+
+    tk.Label(root, text=f"Welcome {username}", font=("Arial", 14)).pack(pady=10)
+    tk.Label(root, text=f"Your Balance: ${balance}", font=("Arial", 12)).pack(pady=5)
+
+    tk.Button(root, text="Deposit", command=lambda: set_action('D')).pack(pady=2)
+    tk.Button(root, text="Withdraw", command=lambda: set_action('W')).pack(pady=2)
+    tk.Button(root, text="View Logs", command=lambda: set_action('L')).pack(pady=2)
+    tk.Button(root, text="Log Out", command=lambda: set_action('Q')).pack(pady=2)
+
+    root.mainloop()
+    return transaction_info['action'], transaction_info.get('amount')
+
+
+def show_logs_screen(logs_str):
+    logs_window = tk.Tk()
+    logs_window.title("Transaction Logs")
+    logs_window.geometry('400x300')
+
+    # Using Text widget to display logs
+    text_area = tk.Text(logs_window, wrap='word')
+    text_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+
+    text_area.insert(tk.END, logs_str)
+    text_area.config(state=tk.DISABLED)  # Make the text area read-only
+
+    logs_window.mainloop()
+
 
 # To run the function, you'll need to uncomment the following line:
 # user_inputs = collect_user_input()

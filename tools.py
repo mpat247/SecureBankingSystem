@@ -3,6 +3,7 @@ import os
 import random
 import time
 import glob
+from datetime import datetime, timedelta
 
 from Crypto.Hash import SHA256, HMAC
 from Crypto.PublicKey import RSA
@@ -50,31 +51,18 @@ def aes_decrypt(key, ciphertext):
 # ADD CBC MODE
 
 def aes_encrypt_cbc(key, plaintext):
-    print(key)
-    print(plaintext)
     cipher = AES.new(key, AES.MODE_CBC)
-    print(cipher)
     ct_bytes = cipher.encrypt(pad(plaintext.encode('utf-8'), AES.block_size))
-    print(ct_bytes)
     iv = cipher.iv
-    print(iv)
     encrypted_data = base64.b64encode(iv + ct_bytes).decode('utf-8')
-    print(encrypted_data)
     return encrypted_data
 
 def aes_decrypt_cbc(key, encrypted_data_b64):
-    print(key)
-    print(encrypted_data_b64)
     iv_ciphertext = base64.b64decode(encrypted_data_b64)
-    print(iv_ciphertext)
     iv = iv_ciphertext[:AES.block_size]
-    cipher = AES.new(key)
     ct_bytes = iv_ciphertext[AES.block_size:]
-    print(ct_bytes)
     cipher = AES.new(key, AES.MODE_CBC, iv=iv)
-    print(cipher)
     plaintext = unpad(cipher.decrypt(ct_bytes), AES.block_size).decode('utf-8')
-    print(plaintext)
     return plaintext
 
 def generate_aes_key():
@@ -154,12 +142,16 @@ def hash_password(password):
 def verify_password(hashed_password, provided_password):
     return hash_password(provided_password) == hashed_password
 
-def generate_mac(message, key):
-    h = HMAC.new(key, digestmod=SHA256)
-    h.update(message)
-    return h.hexdigest()
+def generate_mac(key, message):
+    return hmac.new(key, message.encode(), hashlib.sha256).digest()
 
-def verify_mac(message, received_mac, key):
-    expected_mac = generate_mac(message, key)
-    return hmac.compare_digest(expected_mac, received_mac)
+def verify_mac(message, received_mac_b64, secret_key):
+    received_mac = base64.b64decode(received_mac_b64)
+    return hmac.compare_digest(hmac.new(secret_key, message.encode(), hashlib.sha256).digest(), received_mac)
+
+def is_timestamp_fresh(timestamp, allowed_delay=300):
+    # Check if the timestamp is within the allowed_delay seconds from current time
+    current_timestamp = int(time.time())
+    message_timestamp = int(timestamp)
+    return abs(current_timestamp - message_timestamp) <= allowed_delay
 
