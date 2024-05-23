@@ -29,7 +29,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5009
+PORT = 5008
 serverID = None
 server_socket = None
 
@@ -264,30 +264,28 @@ def process_log_inquiry(username, enc_key):
 
 def process_received_message(encrypted_message, mac_key, enc_key):
     try:
-        # Decrypt the received message
         decrypted_message = aes_decrypt_cbc(enc_key, encrypted_message)
         print(f"Decrypted message: {decrypted_message}")
 
-        # Split the decrypted message to extract its components
         parts = decrypted_message.split('|')
-        timestamp, mac_b64, action, username = parts[:4]
+        if len(parts) < 4:
+            return None, "Incomplete message received."
+
+        timestamp, action, username, amount, mac_b64 = parts[:5]
+        print(f"Timestamp: {timestamp} | Action: {action} | Username: {username} | Amount: {amount} | B64: {mac_b64}")
         amount = parts[4] if len(parts) > 4 else ""
 
-        # Reconstruct the base message for MAC verification
-        base_message = '|'.join([timestamp, action, username] + ([amount] if amount else []))
-
-        # Verify MAC
+        base_message = '|'.join([timestamp, action, username, amount])
         if not verify_mac(base_message, mac_b64, mac_key):
             return None, "MAC verification failed."
 
-        # Verify timestamp freshness (to prevent replay attacks)
         if not is_timestamp_fresh(timestamp):
             return None, "Timestamp not fresh."
 
-        # Return the action and its parameters if everything checks out
         return {'action': action, 'username': username, 'amount': amount}, None
     except Exception as e:
-        return None, str(e)
+        return None, f"Error processing message: {str(e)}"
+
 
 def handle_transaction_action(action, username, amount, enc_key):
     # Note: 'amount' is expected to be a string representing a numerical value for 'D' and 'W' actions

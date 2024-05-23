@@ -146,8 +146,24 @@ def generate_mac(key, message):
     return hmac.new(key, message.encode(), hashlib.sha256).digest()
 
 def verify_mac(message, received_mac_b64, secret_key):
+    print(message)
+    print(received_mac_b64)
+    print(secret_key)
     received_mac = base64.b64decode(received_mac_b64)
-    return hmac.compare_digest(hmac.new(secret_key, message.encode(), hashlib.sha256).digest(), received_mac)
+    calculated_mac = hmac.new(secret_key, message.encode(), hashlib.sha256).digest()
+    return hmac.compare_digest(calculated_mac, received_mac)
+
+def verify_mac(message, received_mac_b64, secret_key):
+    try:
+        received_mac = base64.b64decode(received_mac_b64)
+        calculated_mac = hmac.new(secret_key, message.encode(), hashlib.sha256).digest()
+        return hmac.compare_digest(calculated_mac, received_mac)
+    except base64.binascii.Error:
+        print("Base64 decoding failed.")
+        return False
+    except Exception as e:
+        print(f"Other error in MAC verification: {str(e)}")
+        return False
 
 def is_timestamp_fresh(timestamp, allowed_delay=300):
     # Check if the timestamp is within the allowed_delay seconds from current time
