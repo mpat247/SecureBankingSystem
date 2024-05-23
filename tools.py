@@ -146,9 +146,13 @@ def generate_mac(key, message):
     return hmac.new(key, message.encode(), hashlib.sha256).digest()
 
 def verify_mac(message, received_mac_b64, secret_key):
+<<<<<<< HEAD
     print(message)
     print(received_mac_b64)
     print(secret_key)
+=======
+    print("hello")
+>>>>>>> 12fb76a17d71a7a19de37f2b7b45f05570d9848d
     received_mac = base64.b64decode(received_mac_b64)
     calculated_mac = hmac.new(secret_key, message.encode(), hashlib.sha256).digest()
     return hmac.compare_digest(calculated_mac, received_mac)

@@ -29,7 +29,11 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
+<<<<<<< HEAD
 PORT = 5008
+=======
+PORT = 5010
+>>>>>>> 12fb76a17d71a7a19de37f2b7b45f05570d9848d
 serverID = None
 server_socket = None
 
@@ -138,7 +142,7 @@ def register_user(username, password, enc_key):
 
     hashed_password = hash_password(password)
     with open(users_file_path, 'a') as file:  # Open file in append mode to add new user
-        file.write(f"{username}|{hashed_password}|0\n")
+        file.write(f"{username}|{hashed_password}|1000\n")
 
     return True, "Registration successful."
 
@@ -268,6 +272,7 @@ def process_received_message(encrypted_message, mac_key, enc_key):
         print(f"Decrypted message: {decrypted_message}")
 
         parts = decrypted_message.split('|')
+<<<<<<< HEAD
         if len(parts) < 4:
             return None, "Incomplete message received."
 
@@ -276,6 +281,24 @@ def process_received_message(encrypted_message, mac_key, enc_key):
         amount = parts[4] if len(parts) > 4 else ""
 
         base_message = '|'.join([timestamp, action, username, amount])
+=======
+        if len(parts) == 5:
+            timestamp, action, username, amount, mac_b64 = parts
+        elif len(parts) == 4:
+            timestamp, action, username, mac_b64 = parts
+            amount = ""  # No amount in the message
+        else:
+            return None, "Invalid message format"
+
+        print(f"Timestamp: {timestamp}, Action: {action}, Username: {username}, Amount: {amount}, MAC: {mac_b64}")
+
+        # Reconstruct the base message for MAC verification
+        base_message = '|'.join([timestamp, action, username] + ([amount] if amount else []))
+
+        print("base message: " + base_message)
+
+        # Verify MAC
+>>>>>>> 12fb76a17d71a7a19de37f2b7b45f05570d9848d
         if not verify_mac(base_message, mac_b64, mac_key):
             return None, "MAC verification failed."
 

@@ -24,7 +24,11 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
+<<<<<<< HEAD
 PORT = 5008
+=======
+PORT = 5010
+>>>>>>> 12fb76a17d71a7a19de37f2b7b45f05570d9848d
 #################### save client keys ##################
 def save_keys(server_socket, clientID):
     logger.info("Connected to server.")
