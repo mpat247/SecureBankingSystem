@@ -29,7 +29,7 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 HOST = 'localhost'
-PORT = 5009
+PORT = 5010
 serverID = None
 server_socket = None
 
@@ -138,7 +138,7 @@ def register_user(username, password, enc_key):
 
     hashed_password = hash_password(password)
     with open(users_file_path, 'a') as file:  # Open file in append mode to add new user
-        file.write(f"{username}|{hashed_password}|0\n")
+        file.write(f"{username}|{hashed_password}|1000\n")
 
     return True, "Registration successful."
 
@@ -270,11 +270,20 @@ def process_received_message(encrypted_message, mac_key, enc_key):
 
         # Split the decrypted message to extract its components
         parts = decrypted_message.split('|')
-        timestamp, mac_b64, action, username = parts[:4]
-        amount = parts[4] if len(parts) > 4 else ""
+        if len(parts) == 5:
+            timestamp, action, username, amount, mac_b64 = parts
+        elif len(parts) == 4:
+            timestamp, action, username, mac_b64 = parts
+            amount = ""  # No amount in the message
+        else:
+            return None, "Invalid message format"
+
+        print(f"Timestamp: {timestamp}, Action: {action}, Username: {username}, Amount: {amount}, MAC: {mac_b64}")
 
         # Reconstruct the base message for MAC verification
         base_message = '|'.join([timestamp, action, username] + ([amount] if amount else []))
+
+        print("base message: " + base_message)
 
         # Verify MAC
         if not verify_mac(base_message, mac_b64, mac_key):
