@@ -1,360 +1,236 @@
-import os
-import random
+# client.py
+
 import socket
-import logging
-import colorlog
-from tools import *
-import sys
 import tkinter as tk
-from tkinter import simpledialog, messagebox
-
-#######################Console colors##################
-logger = logging.getLogger('ClientLogger')
-if not logger.handlers:
-    logger.setLevel(logging.INFO)
-    handler = colorlog.StreamHandler()
-    handler.setFormatter(colorlog.ColoredFormatter(
-        '%(log_color)s[%(levelname)s]: %(message)s',
-        log_colors={
-            'INFO': 'cyan',
-            'ERROR': 'red',
-            'DEBUG': 'green',
-        }
-    ))
-    logger.addHandler(handler)
-
-HOST = 'localhost'
-<<<<<<< HEAD
-PORT = 5008
-=======
-PORT = 5010
->>>>>>> 12fb76a17d71a7a19de37f2b7b45f05570d9848d
-#################### save client keys ##################
-def save_keys(server_socket, clientID):
-    logger.info("Connected to server.")
-    shared_key = get_random_bytes(16)
-    logger.info(f'Shared key with client: {clientID}: {shared_key}')
-    save_shared_key(shared_key, 'keys/', f'{clientID}_shared_key.bin')
-    message = f"{clientID}"
-    server_socket.sendall(message.encode())
-    logger.info("Message sent to server. Waiting for response...")
-    serverID = server_socket.recv(1024)
-    logger.info(f"Received response: {serverID.decode()}")
-    return serverID.decode(), shared_key
-
-#######Initial Verificaiton, Securing channel and getting encryption and MAC keys###############
-def initial_verification(shared_key, server_socket):
-    # Print socket and shared key for debugging
-    print("Socket:", server_socket)
-    print("Shared key:", shared_key)
-
-    # Generate nonce and timestamp
-    nonce_c = generate_nonce()
-    print("Nonce generated:", nonce_c)
-    timestamp_c = str(get_timestamp()).encode()
-    print("Timestamp encoded:", timestamp_c)
-
-    # Concatenate nonce and timestamp, and then encode to bytes
-    nonce_timestamp = f"{nonce_c}|{timestamp_c.decode()}"
-    print("Combined nonce and timestamp:", nonce_timestamp)
-    nonce_timestamp_bytes = nonce_timestamp.encode()
-    print("Combined nonce and timestamp encoded:", nonce_timestamp_bytes)
-
-    # Encrypt the nonce and timestamp using AES
-    encrypted_nonce_timestamp = aes_encrypt(shared_key, nonce_timestamp_bytes)
-    print("Encrypted nonce and timestamp:", encrypted_nonce_timestamp)
-
-    # Send encrypted nonce and timestamp to server
-    server_socket.sendall(encrypted_nonce_timestamp)
-    print("Encrypted nonce and timestamp sent to server.")
-
-    # Receive nonce and timestamp from client
-    encrypted_server_response = server_socket.recv(1024)
-    print("Received encrypted nonce and timestamp from client.")
-
-    decrypted_server_response = aes_decrypt(shared_key, encrypted_server_response)
-    print("Decrypted nonce and timestamp from client.")
-
-    nonce_s, timestamp_s, nonce_c_return = map(int, decrypted_server_response.split(b"|"))
-    print(type(nonce_s))
-    print("Received nonce_s:", nonce_s)
-    print("Received timestamp_s:", timestamp_s)
-    print("Received nonce_c:", nonce_c_return)
-
-    # print(is_timestamp_valid(int(timestamp_c), get_timestamp()))
-    # Check if the timestamp is valid
-    # add nonce_c check
-    print(not is_timestamp_valid(int(timestamp_s), get_timestamp()))
-    print((nonce_c != nonce_c_return) or not is_timestamp_valid(int(timestamp_s), get_timestamp()))
-    if (nonce_c != nonce_c_return) or not is_timestamp_valid(int(timestamp_s), get_timestamp()):
-        logger.info("Invalid timestamp received from client or nonce not verified.")
-        logger.info("Invalid timestamp received from client or nonce not verified.")
-        return False
-
-    #   logger.info("Server authenticated successfully.")
-
-    # Generate nonce and timestamp
-    nonce_c2 = generate_nonce()
-    print("Nonce2 generated:", nonce_c2)
-    timestamp_c2 = str(get_timestamp()).encode()
-    print("Timestamp2 encoded:", timestamp_c)
-
-    # Concatenate nonce and timestamp, and then encode to bytes
-    nonce_timestamp2 = f"{nonce_c2}|{timestamp_c2.decode()}|{nonce_s}"
-    print("Combined nonce2 and timestamp2 and server nonce:", nonce_timestamp2)
-    nonce_timestamp_bytes2 = nonce_timestamp2.encode()
-    print("Combined nonce2 and timestamp2 and server nonce encoded:", nonce_timestamp_bytes2)
-
-    # Encrypt the nonce and timestamp using AES
-    encrypted_nonce_timestamp2 = aes_encrypt(shared_key, nonce_timestamp_bytes2)
-    print("Encrypted nonce2 and timestamp2:", encrypted_nonce_timestamp2)
-
-    # Send encrypted nonce and timestamp to server
-    server_socket.sendall(encrypted_nonce_timestamp2)
-    print("Encrypted nonce2 and timestamp2 sent to server.")
-
-    # MASTER SECRET
-
-    # Receive master secret from client
-    encrypted_master_secret = server_socket.recv(1024)
-    print("Encrypted Master Secret from Server.", encrypted_master_secret)
-
-    master_secret = aes_decrypt(shared_key, encrypted_master_secret)
-    print("Decrypted Master Secret from Server.", master_secret)
-
-    enc_key, mac_key = derive_keys_from_master_secret(master_secret)
-
-    return enc_key, mac_key
-
-def prepare_message(action, username, amount, mac_key, enc_key):
-    timestamp = str(int(time.time()))
-    print("Timestamp: " + timestamp)
-    # Construct the base message
-    base_message = f"{timestamp}|{action}|{username}"
-    print(f'Base message: {base_message}')
-    # Only add amount to the message if the action requires it and it's provided
-    if action != 'L' and amount:
-        base_message += f"|{amount}"
-        print(base_message)
-
-    # Generate MAC using the constructed base message and the secret MAC key
-    mac = generate_mac(mac_key, base_message)
-    print(mac)
-    mac_b64 = base64.b64encode(mac).decode('utf-8')  # Convert MAC to base64 for transmission
-    print(mac_b64)
-
-    # Include the MAC in the full message
-    full_message = f"{base_message}|{mac_b64}"
-    print(full_message)
-
-    # Encrypt the full message using AES in CBC mode with the encryption key
-    encrypted_message = aes_encrypt_cbc(enc_key, full_message)
-    print(encrypted_message)
-    return encrypted_message
-
-
-def client_operation():
-    clientID = f'ATMClient_{random.randint(1000, 9999)}'
-    logger.info(f"Starting client with ID {clientID}")
-    # Generate and save RSA keys for this client session
-    try:
-        with socket.create_connection((HOST, PORT)) as server_socket:
-            # intial connection and saving keys
-            serverID, shared_key = save_keys(server_socket, clientID)
-            print(shared_key)
-            print(serverID)
-            try:
-                # Key Distribution
-                enc_key, mac_key = initial_verification(shared_key, server_socket)
-                print(f'Encryption Key: {enc_key}')
-                print(f'MAC Key: {mac_key}')
-
-                if not enc_key or not mac_key:
-                    logger.error("Authentication failed.")
-
-                else:
-                    loggedIn = False
-
-                    # Client side: Sending login or registration requests
-                    while not loggedIn:
-                        username, password, action = collect_user_input()
-                        if action == 'Q':
-                            break
-                        print(f'Username: {username} | Password: {password} | Action: {action}')
-                        # Format and encrypt the message
-                        message = f"{action}|{username}|{password}"
-                        print(message)
-                        print(message.encode('utf-8'))
-                        encrypted_message = aes_encrypt(enc_key, message.encode())
-                        print(encrypted_message)
-                        # Send to server
-                        server_socket.sendall(encrypted_message)
-
-                        # Wait for and decrypt the response
-                        encrypted_login_response = server_socket.recv(1024)
-                        decrypted_login_response = aes_decrypt(enc_key, encrypted_login_response)
-                        response = decrypted_login_response.decode()
-
-                        # Example response processing
-                        if "Login successful" in response:
-                            userBalance = server_socket.recv(1024).decode('utf-8')
-                            print(userBalance)
-                            messagebox.showinfo("Success", "Login successful!")
-                            loggedIn = True
-                        elif "Registration successful" in response:
-                            messagebox.showinfo("Success", "Registration successful. Please log in.")
-                        else:
-                            messagebox.showerror("Error", response)
-
-                    while loggedIn:
-                        action, amount = collect_transaction_input(username, userBalance)
-                        print(action, amount)
-                        if action == 'Q':
-                            print("Logging out...")
-                            break  # Exit the loop
-                        print(action, username,amount, mac_key, enc_key)
-                        encrypted_message = prepare_message(action, username, amount, mac_key, enc_key)
-                        print(encrypted_message)
-                        server_socket.sendall(encrypted_message.encode('utf-8'))
-
-                        # Handle server response
-                        encrypted_response = server_socket.recv(4096)
-                        response = aes_decrypt_cbc(enc_key, encrypted_response.decode('utf-8'))
-                        response_type, message = response.split('|',
-                                                                1)  # Splitting only on the first '|' to ensure any additional '|' in the message don't affect splitting
-
-                        if response_type == "Success":
-                            messagebox.showinfo("Success", message)
-                            if action == 'L':  # If the action was to view logs
-                                show_logs_screen(
-                                    message)  # Assuming show_logs_screen is a function you will define to display logs
-                            else:
-                                messagebox.showinfo("Success", message)  # For Deposit, Withdraw, or Balance Inquiry
-                        elif response_type == "Error":
-                            messagebox.showerror("Error", message)
-
-                    print("Session ended.")
-
-
-                # AUTHENTICATION COMPLETED
-
-            except Exception as e:
-                print("Error:", e)
-
-
-
-            # # Input to continue or quit
-            # quit_command = input("Enter 'q' to quit or any other key to continue: ").strip().lower()
-            # if quit_command == 'q':
-            #     break
-    finally:
-        # Remove keys before exiting
-        # remove_keys(clientID)
-        remove_shared_key(clientID)
-        logger.info("Client keys removed. Exiting.")
-
-
-
-def collect_user_input():
-    def finalize(action):
-        user_info['username'] = username_entry.get() if username_entry else ''
-        user_info['password'] = password_entry.get() if password_entry else ''
-        user_info['action'] = action
-        root.destroy()
-
-    def on_close():
-        # Handle the quit action when the window is closed
-        finalize('Q')
-
-    user_info = {'username': '', 'password': '', 'action': ''}
-
-    root = tk.Tk()
-    root.title("User Action")
-    root.geometry('450x350')
-    root.configure(bg='#2D3047')
-    root.protocol("WM_DELETE_WINDOW", on_close)  # Handle the window close event
-
-    # Font Styles
-    labelFont = ('Arial', 12)
-    entryFont = ('Arial', 12)
-    buttonFont = ('Arial', 12, 'bold')
-
-    # Define Entry widgets globally so they can be accessed in on_close if needed
-    global username_entry, password_entry
-    username_entry = tk.Entry(root, font=entryFont, bd=0, bg='#EFF1F3')
-    password_entry = tk.Entry(root, show="*", font=entryFont, bd=0, bg='#EFF1F3')
-
-    # Layout for Username and Password Entry
-    tk.Label(root, text="Username:", bg='#2D3047', fg='white', font=labelFont).place(x=60, y=60)
-    username_entry.place(x=160, y=60, width=220, height=30)
-
-    tk.Label(root, text="Password:", bg='#2D3047', fg='white', font=labelFont).place(x=60, y=120)
-    password_entry.place(x=160, y=120, width=220, height=30)
-
-    # Action Buttons
-    tk.Button(root, text="Login", bg='#00C897', fg='white', font=buttonFont, bd=0,
-              command=lambda: finalize('L')).place(x=50, y=200, width=100, height=40)
-
-    tk.Button(root, text="Register", bg='#FF6B6B', fg='white', font=buttonFont, bd=0,
-              command=lambda: finalize('R')).place(x=180, y=200, width=100, height=40)
-
-    tk.Button(root, text="Quit", bg='#757575', fg='white', font=buttonFont, bd=0,
-              command=lambda: finalize('Q')).place(x=310, y=200, width=100, height=40)
-
-    root.mainloop()
-
-    return user_info['username'], user_info['password'], user_info['action']
-
-
-def collect_transaction_input(username, balance):
-    root = tk.Tk()
-    root.title("Transaction")
-    root.geometry('300x250')
-
-    transaction_info = {'action': '', 'amount': ''}
-
-    def set_action(action):
-        transaction_info['action'] = action
-        if action in ['D', 'W']:  # For deposit and withdraw, prompt for amount
-            transaction_info['amount'] = simpledialog.askstring("Amount", "Enter amount:")
-        root.destroy()
-
-    tk.Label(root, text=f"Welcome {username}", font=("Arial", 14)).pack(pady=10)
-    tk.Label(root, text=f"Your Balance: ${balance}", font=("Arial", 12)).pack(pady=5)
-
-    tk.Button(root, text="Deposit", command=lambda: set_action('D')).pack(pady=2)
-    tk.Button(root, text="Withdraw", command=lambda: set_action('W')).pack(pady=2)
-    tk.Button(root, text="View Logs", command=lambda: set_action('L')).pack(pady=2)
-    tk.Button(root, text="Log Out", command=lambda: set_action('Q')).pack(pady=2)
-
-    root.mainloop()
-    return transaction_info['action'], transaction_info.get('amount')
-
-
-def show_logs_screen(logs_str):
-    logs_window = tk.Tk()
-    logs_window.title("Transaction Logs")
-    logs_window.geometry('400x300')
-
-    # Using Text widget to display logs
-    text_area = tk.Text(logs_window, wrap='word')
-    text_area.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
-
-    text_area.insert(tk.END, logs_str)
-    text_area.config(state=tk.DISABLED)  # Make the text area read-only
-
-    logs_window.mainloop()
-
-
-# To run the function, you'll need to uncomment the following line:
-# user_inputs = collect_user_input()
-# Note: Uncommenting and running the above line outside of a Python environment that supports GUI operations may result in an error.
-
+from tkinter import messagebox, ttk
+from datetime import datetime
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.backends import default_backend
+from utils import CryptoUtils
+
+class Client:
+    def __init__(self, host='localhost', port=5005):
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.client_socket.connect((host, port))
+        print(f"Connected to server at {host}:{port}")
+        self.perform_key_exchange()
+
+    def perform_key_exchange(self):
+        parameters = CryptoUtils.load_dh_parameters()
+        client_private_key, client_public_key = CryptoUtils.generate_keys(parameters)
+        self.client_socket.send(client_public_key.public_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PublicFormat.SubjectPublicKeyInfo
+        ))
+
+        server_public_key_bytes = self.client_socket.recv(4096)
+        server_public_key = serialization.load_pem_public_key(server_public_key_bytes, backend=default_backend())
+        shared_secret = client_private_key.exchange(server_public_key)
+        self.enc_key, self.mac_key = CryptoUtils.derive_keys(shared_secret)
+        print("Shared keys established")
+
+    def send_message(self, message):
+        ciphertext = CryptoUtils.encrypt(message, self.enc_key)
+        mac = CryptoUtils.generate_mac(ciphertext, self.mac_key)
+        self.client_socket.send(ciphertext + mac)
+        response = self.client_socket.recv(4096)
+        ciphertext, received_mac = response[:-32], response[-32:]
+        if CryptoUtils.verify_mac(ciphertext, received_mac, self.mac_key):
+            plaintext = CryptoUtils.decrypt(ciphertext, self.enc_key)
+            return plaintext
+        else:
+            return "ERROR|MAC verification failed"
+
+    def close(self):
+        self.client_socket.close()
+
+class App:
+    def __init__(self, root, client):
+        self.client = client
+        self.root = root
+        self.root.title("Banking System")
+        self.username = None
+        self.balance = 0
+        self.setup_styles()
+        self.create_login_register_widgets()
+
+    def setup_styles(self):
+        style = ttk.Style()
+        style.configure('TButton', font=('Helvetica', 12), padding=10)
+        style.configure('TLabel', font=('Helvetica', 14))
+        style.configure('TEntry', font=('Helvetica', 12), padding=5)
+        style.configure('Header.TLabel', font=('Helvetica', 18, 'bold'))
+        style.configure('Success.TLabel', foreground='green')
+        style.configure('Error.TLabel', foreground='red')
+
+    def create_login_register_widgets(self):
+        self.login_frame = ttk.Frame(self.root, padding=20)
+        self.register_frame = ttk.Frame(self.root, padding=20)
+
+        self.username_label = ttk.Label(self.login_frame, text="Username:")
+        self.username_entry = ttk.Entry(self.login_frame)
+        self.password_label = ttk.Label(self.login_frame, text="Password:")
+        self.password_entry = ttk.Entry(self.login_frame, show="*")
+        self.login_button = ttk.Button(self.login_frame, text="Login", command=self.login)
+        self.register_button = ttk.Button(self.login_frame, text="Register", command=self.show_register_frame)
+
+        self.username_label.pack(pady=5)
+        self.username_entry.pack(pady=5)
+        self.password_label.pack(pady=5)
+        self.password_entry.pack(pady=5)
+        self.login_button.pack(pady=10)
+        self.register_button.pack(pady=5)
+
+        self.register_username_label = ttk.Label(self.register_frame, text="Username:")
+        self.register_username_entry = ttk.Entry(self.register_frame)
+        self.register_password_label = ttk.Label(self.register_frame, text="Password:")
+        self.register_password_entry = ttk.Entry(self.register_frame, show="*")
+        self.register_confirm_button = ttk.Button(self.register_frame, text="Register", command=self.register)
+        self.back_button = ttk.Button(self.register_frame, text="Back", command=self.show_login_frame)
+
+        self.register_username_label.pack(pady=5)
+        self.register_username_entry.pack(pady=5)
+        self.register_password_label.pack(pady=5)
+        self.register_password_entry.pack(pady=5)
+        self.register_confirm_button.pack(pady=10)
+        self.back_button.pack(pady=5)
+
+        self.login_frame.pack()
+
+    def show_login_frame(self):
+        self.register_frame.pack_forget()
+        self.login_frame.pack()
+
+    def show_register_frame(self):
+        self.login_frame.pack_forget()
+        self.register_frame.pack()
+
+    def login(self):
+        username = self.username_entry.get()
+        password = self.password_entry.get()
+        response = self.client.send_message(f"LOGIN|{username}|{password}")
+        status, message = response.split('|')
+        if status == "SUCCESS":
+            self.username = username
+            self.balance = int(message)
+            self.show_main_page()
+        else:
+            messagebox.showerror("Login", message)
+
+    def register(self):
+        username = self.register_username_entry.get()
+        password = self.register_password_entry.get()
+        response = self.client.send_message(f"REGISTER|{username}|{password}")
+        status, message = response.split('|')
+        if status == "SUCCESS":
+            messagebox.showinfo("Register", message)
+            self.show_login_frame()
+        else:
+            messagebox.showerror("Register", message)
+
+    def show_main_page(self):
+        self.clear_frames()
+
+        main_frame = ttk.Frame(self.root, padding=20)
+        main_frame.pack()
+
+        welcome_label = ttk.Label(main_frame, text=f"Welcome, {self.username}", style='Header.TLabel')
+        balance_label = ttk.Label(main_frame, text=f"Your balance: ${self.balance}", style='Success.TLabel' if self.balance >= 0 else 'Error.TLabel')
+
+        deposit_button = ttk.Button(main_frame, text="Deposit", command=self.show_deposit_screen)
+        withdraw_button = ttk.Button(main_frame, text="Withdraw", command=self.show_withdraw_screen)
+        view_transactions_button = ttk.Button(main_frame, text="View Transactions", command=self.show_transactions)
+        logout_button = ttk.Button(main_frame, text="Log Out", command=self.logout)
+
+        welcome_label.pack(pady=10)
+        balance_label.pack(pady=10)
+        deposit_button.pack(pady=5)
+        withdraw_button.pack(pady=5)
+        view_transactions_button.pack(pady=5)
+        logout_button.pack(pady=10)
+
+    def show_deposit_screen(self):
+        self.clear_frames()
+
+        deposit_frame = ttk.Frame(self.root, padding=20)
+        deposit_frame.pack()
+
+        amount_label = ttk.Label(deposit_frame, text="Enter amount to deposit:")
+        amount_entry = ttk.Entry(deposit_frame)
+        submit_button = ttk.Button(deposit_frame, text="Deposit", command=lambda: self.deposit(amount_entry.get()))
+        back_button = ttk.Button(deposit_frame, text="Back", command=self.show_main_page)
+
+        amount_label.pack(pady=5)
+        amount_entry.pack(pady=5)
+        submit_button.pack(pady=10)
+        back_button.pack(pady=5)
+
+    def deposit(self, amount):
+        try:
+            amount = int(amount)
+            self.balance += amount
+            self.client.send_message(f"DEPOSIT|{self.username}|{amount}")
+            self.show_main_page()
+        except ValueError:
+            messagebox.showerror("Error", "Invalid amount")
+
+    def show_withdraw_screen(self):
+        self.clear_frames()
+
+        withdraw_frame = ttk.Frame(self.root, padding=20)
+        withdraw_frame.pack()
+
+        amount_label = ttk.Label(withdraw_frame, text="Enter amount to withdraw:")
+        amount_entry = ttk.Entry(withdraw_frame)
+        submit_button = ttk.Button(withdraw_frame, text="Withdraw", command=lambda: self.withdraw(amount_entry.get()))
+        back_button = ttk.Button(withdraw_frame, text="Back", command=self.show_main_page)
+
+        amount_label.pack(pady=5)
+        amount_entry.pack(pady=5)
+        submit_button.pack(pady=10)
+        back_button.pack(pady=5)
+
+    def withdraw(self, amount):
+        try:
+            amount = int(amount)
+            self.balance -= amount
+            self.client.send_message(f"WITHDRAW|{self.username}|{amount}")
+            self.show_main_page()
+        except ValueError:
+            messagebox.showerror("Error", "Invalid amount")
+
+    def show_transactions(self):
+        self.clear_frames()
+
+        transactions_frame = ttk.Frame(self.root, padding=20)
+        transactions_frame.pack()
+
+        transactions = self.client.send_message(f"TRANSACTIONS|{self.username}")
+        transactions = transactions.split('|')
+
+        for transaction in transactions:
+            if transaction:
+                date, time, trans_type, amount = transaction.split(',')
+                color = "green" if trans_type == "Deposit" else "red"
+                transaction_label = ttk.Label(transactions_frame, text=f"{date} {time} - {trans_type}: ${amount}", foreground=color)
+                transaction_label.pack()
+
+        back_button = ttk.Button(transactions_frame, text="Back", command=self.show_main_page)
+        back_button.pack(pady=10)
+
+    def logout(self):
+        self.client.send_message(f"LOGOUT|{self.username}")
+        self.client.close()
+        self.clear_frames()
+        self.create_login_register_widgets()
+
+    def clear_frames(self):
+        for widget in self.root.winfo_children():
+            widget.destroy()
 
 if __name__ == "__main__":
-    try:
-        client_operation()
-    except KeyboardInterrupt:
-        # Handle Ctrl+C gracefully
-        logger.info("Interrupt received, shutting down...")
-        sys.exit(0)
+    client = Client()
+    root = tk.Tk()
+    app = App(root, client)
+    root.mainloop()
+    client.close()
