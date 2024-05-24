@@ -1,4 +1,0 @@
-, , 0.0
-manav, manav, 19.0
-hello, hello, 300.0
-admin, admin, 0.0
